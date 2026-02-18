@@ -12,6 +12,8 @@ services:
       - ./backend/data:/app/data
     environment:
       - DATABASE_URL=sqlite:////app/data/appletv.db
+      # URL по которому Apple TV достанет поток (склейка 720p/1080p). Укажите IP вашего ПК в LAN, напр. http://192.168.1.5:8000
+      - STREAM_BASE_URL=${STREAM_BASE_URL:-http://localhost:8000}
     networks:
       - app-network
     restart: unless-stopped

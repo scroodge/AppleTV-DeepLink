@@ -1,6 +1,7 @@
 """Apple TV service using pyatv."""
 import asyncio
 import logging
+import os
 from typing import List, Optional, Dict, Any
 from pyatv import scan, pair, connect
 from pyatv.const import Protocol, PairingRequirement
@@ -308,6 +309,12 @@ class AppleTVService:
             return True
         return False
 
+    def _is_hls_url(self, url: Optional[str]) -> bool:
+        """Check if URL is HLS (.m3u8) for server-side remux to MP4."""
+        if not url or not isinstance(url, str):
+            return False
+        return ".m3u8" in url.lower()
+
     def _is_deep_link(self, url: Optional[str]) -> bool:
         """Check if URL is a deep link (app link) vs media URL."""
         if not url or not isinstance(url, str):
@@ -450,34 +457,73 @@ class AppleTVService:
                     except Exception as e:
                         logger.warning(f"Failed to launch as deep link: {e}, falling back to AirPlay")
                 
-                # AirPlay: only direct media URLs work; page links (YouTube, etc.) can be resolved via yt-dlp
+                # AirPlay: only direct media URLs work; page links (YouTube, etc.) via yt-dlp or server-side merge
                 stream = atv_instance.stream
                 if stream:
                     play_url_final = url
                     resolved_quality = None
-                    if is_deep_link and not is_direct_media:
-                        # Try to resolve to direct stream (e.g. YouTube -> direct URL)
-                        resolved = await self._resolve_stream_url(url, quality)
-                        if resolved:
-                            play_url_final = resolved["url"]
-                            resolved_quality = resolved.get("quality_label")
-                            logger.info(f"Resolved URL to direct stream (quality: {resolved_quality or '?'}), playing via AirPlay")
+                    # HLS (.m3u8): remux to MP4 on server so Apple TV gets a single MP4 stream (like YouTube merge)
+                    if is_direct_media and self._is_hls_url(url):
+                        try:
+                            from app.stream_merge import create_hls_session
+                            stream_id = create_hls_session(url)
+                            base = (os.environ.get("STREAM_BASE_URL") or "http://localhost:8000").rstrip("/")
+                            play_url_final = f"{base}/api/appletv/stream/{stream_id}"
+                            self._last_merge_used = True
+                            logger.info("Using HLS→MP4 remux stream for AirPlay")
+                        except Exception as e:
+                            logger.warning("HLS→MP4 session failed: %s", e)
+                    elif is_deep_link and not is_direct_media:
+                        self._last_merge_used = False
+                        # For 720p/1080p try server-side merge (video+audio) so we get quality with sound
+                        if quality in ("720p", "1080p"):
+                            try:
+                                from app.stream_merge import get_video_audio_urls, create_merge_session
+                                merge_info = await get_video_audio_urls(url, quality)
+                                if merge_info:
+                                    stream_id = create_merge_session(
+                                        merge_info["video_url"],
+                                        merge_info["audio_url"],
+                                        merge_info.get("height"),
+                                    )
+                                    base = (os.environ.get("STREAM_BASE_URL") or "http://localhost:8000").rstrip("/")
+                                    play_url_final = f"{base}/api/appletv/stream/{stream_id}"
+                                    resolved_quality = f"{merge_info.get('height') or quality}p" if merge_info.get("height") else quality
+                                    logger.info(f"Using server merge stream (quality: {resolved_quality})")
+                                    # Mark so frontend/log can show "склейка на сервере"
+                                    self._last_merge_used = True
+                            except Exception as e:
+                                logger.warning("Merge fallback failed: %s", e)
+                                self._last_merge_used = False
                         else:
-                            return {
-                                "status": "UNSUPPORTED_URL",
-                                "message": "Не удалось получить прямую ссылку на видео. Поддерживаются YouTube и похожие сайты (нужен yt-dlp). Для Netflix/приложений используйте Apple TV 4-го поколения (tvOS) или вставьте прямую ссылку (.mp4, .m3u8).",
-                                "device_name": atv.name,
-                            }
+                            self._last_merge_used = False
+                        # Fallback: single URL (no merge)
+                        if play_url_final == url:
+                            resolved = await self._resolve_stream_url(url, quality)
+                            if resolved:
+                                play_url_final = resolved["url"]
+                                resolved_quality = resolved.get("quality_label")
+                                logger.info(f"Resolved URL to direct stream (quality: {resolved_quality or '?'}), playing via AirPlay")
+                            else:
+                                return {
+                                    "status": "UNSUPPORTED_URL",
+                                    "message": "Не удалось получить прямую ссылку на видео. Поддерживаются YouTube и похожие сайты (нужен yt-dlp). Для Netflix/приложений используйте Apple TV 4-го поколения (tvOS) или вставьте прямую ссылку (.mp4, .m3u8).",
+                                    "device_name": atv.name,
+                                }
                     logger.info("Playing URL via AirPlay: %s", play_url_final[:80] + ("..." if len(play_url_final) > 80 else ""))
                     await stream.play_url(play_url_final)
                     msg = f"Воспроизведение на {atv.name}"
                     if resolved_quality:
                         msg += f" • качество: {resolved_quality}"
+                    merge_used = getattr(self, "_last_merge_used", False)
+                    if merge_used:
+                        msg += " • склейка на сервере"
                     return {
                         "status": "SUCCESS",
                         "message": msg,
                         "method": "airplay",
                         "resolved_quality": resolved_quality,
+                        "merge_used": merge_used,
                     }
                 else:
                     raise ValueError("Neither Apps nor Stream interface available on this device")

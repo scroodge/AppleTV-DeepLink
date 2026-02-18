@@ -116,7 +116,7 @@ Apple TV 1st generation (2007) does not support AirPlay or modern protocols. The
    - **Deep Links**: Supported for Apple TV apps (Netflix, Disney+, HBO Max, Apple TV+, YouTube, etc.)
      - Example: `https://www.netflix.com/title/80234304`
      - Example: `https://tv.apple.com/show/severance/...`
-   - **Media URLs**: Direct media files (`.mp4`, `.m3u8`, etc.) will be played via AirPlay
+   - **Media URLs**: Direct media files (`.mp4`, `.m3u8`, etc.) will be played via AirPlay. Ссылки на **HLS** (`.m3u8`) сервер принимает и отдаёт как **MP4** (remux через ffmpeg), чтобы Apple TV получал один поток — так же, как для YouTube при 720p/1080p. Нужен корректный `STREAM_BASE_URL`, чтобы Apple TV мог запросить поток.
 2. Click "Отправить на Apple TV" (Send to Apple TV)
 3. The URL will be launched/played on your default Apple TV device
    - Deep links are launched via the Apps interface
@@ -127,6 +127,28 @@ Apple TV 1st generation (2007) does not support AirPlay or modern protocols. The
 1. Open Settings (⚙ button)
 2. Find your paired device in the list
 3. Click "Установить по умолчанию" (Set as default)
+
+### Пересборка потока на сервере (720p/1080p со звуком)
+
+Для YouTube при выборе **720p** или **1080p** бэкенд может склеивать видео- и аудиопоток через **ffmpeg** и отдавать один поток на Apple TV (со звуком). Для этого Apple TV должен иметь доступ по HTTP к бэкенду.
+
+- Задайте переменную **`STREAM_BASE_URL`** — URL, по которому Apple TV сможет запросить поток (обычно это IP вашего ПК в локальной сети и порт 8000).
+- Пример: на хосте с IP `192.168.1.5` и портом 8000 задайте в `docker-compose.yml` или в `.env`:
+  ```bash
+  STREAM_BASE_URL=http://192.168.1.5:8000
+  ```
+- Перезапустите контейнеры. После этого при выборе 720p/1080p для YouTube будет использоваться склейка на сервере и воспроизведение со звуком.
+
+**Как понять, что склейка работает**
+
+1. **Журнал на странице** — внизу страницы в блоке «Журнал операций со ссылками» после успешной отправки YouTube 720p/1080p в сообщении должно быть: **«качество: 1080p • склейка на сервере»**. Если видите только «качество: 1080p» без «склейка на сервере» — использовался один поток (часто без звука).
+2. **По звуку** — включите на Apple TV воспроизведение с качеством 1080p: если слышен звук, склейка работает. Если картинка 1080p, но звука нет — Apple TV не достучался до `STREAM_BASE_URL` или merge не сработал.
+3. **Логи бэкенда** — в логах контейнера должна быть строка `Using server merge stream (quality: 1080p)`. Ошибки merge: `Merge fallback failed` или отсутствие этой строки при 1080p.
+4. **Проверка STREAM_BASE_URL** — с другого устройства в той же Wi‑Fi откройте в браузере `http://<ваш_STREAM_BASE_URL>/health` (например `http://192.168.100.122:8000/health`). Должен вернуться `{"status":"ok"}`. Если страница не открывается — Apple TV тоже не сможет загрузить поток.
+
+**Если на Apple TV «An error occurred loading» при 1080p (склейка):**
+- Убедитесь, что `STREAM_BASE_URL` — IP вашего Mac/ПК в той же сети, что и Apple TV (не `localhost`). Проверьте доступность по пункту 4 выше.
+- Первые байты потока могут приходить с задержкой (подключение к YouTube). Перезапустите воспроизведение или попробуйте 720p — иногда загружается быстрее.
 
 ### Удаление и изменение устройств
 

@@ -169,7 +169,7 @@
 				<span class="text-xs text-gray-500">для YouTube и подобных</span>
 			</div>
 			<p class="text-xs text-amber-600 mt-1">
-				720p/1080p на YouTube — часто только видео (без звука): сайт отдаёт потоки раздельно. Сервисы вроде Y2mate склеивают их на сервере (ffmpeg), поэтому там есть 1080p со звуком.
+				При 720p/1080p сервер может склеивать видео+звук (ffmpeg). Задайте STREAM_BASE_URL (IP ПК в сети), чтобы Apple TV мог загрузить поток — тогда будет 720p/1080p со звуком.
 			</p>
 			<p class="text-xs text-gray-500 mt-1">
 				Apple TV 3-го поколения: поддерживаются прямые ссылки (.mp4, .m3u8) и ссылки YouTube (воспроизведение через извлечение потока). Netflix и приложения — только на Apple TV 4-го поколения (tvOS).
@@ -251,7 +251,7 @@
 					>
 						{entry.status === 'start' ? '…' : entry.status === 'success' ? 'OK' : 'ERR'}
 					</span>
-					<span class="min-w-0 break-all">
+					<span class="min-w-0 break-all flex-1">
 						{#if entry.url}
 							<span class="text-gray-400">{entry.url}</span>
 							{#if entry.device}
@@ -260,6 +260,17 @@
 							<br />
 						{/if}
 						{entry.message}
+						{#if entry.status === 'success'}
+							{@const isMerge = entry.merge_used ?? (!!(entry.message && entry.message.includes('склейка на сервере')))}
+							<div class="mt-1 text-gray-500">
+								Вариант:
+								{#if isMerge}
+									<span class="px-1.5 py-0.5 rounded text-green-300 bg-green-900/50 font-medium" title="Видео и звук склеены на сервере (ffmpeg)">склейка на сервере</span>
+								{:else}
+									<span class="px-1.5 py-0.5 rounded text-gray-400 bg-gray-700/50 font-medium" title="Один поток с yt-dlp">прямой поток</span>
+								{/if}
+							</div>
+						{/if}
 					</span>
 				</div>
 			{/each}

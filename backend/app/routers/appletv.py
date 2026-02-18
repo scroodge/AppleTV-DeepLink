@@ -1,11 +1,13 @@
 """Apple TV API routes."""
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
 import logging
 
 from app.database import get_db
+from app.stream_merge import stream_merged_mp4_async, get_merge_session
 from app.models import Device, DefaultDevice
 from app.services.appletv_service import AppleTVService
 from app.activity_log import add as log_add, get as log_get
@@ -121,6 +123,18 @@ async def get_paired_devices(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Get devices error: {e}", exc_info=True)
         return error_response("GET_DEVICES_FAILED", str(e))
+
+
+@router.get("/stream/{stream_id}")
+async def stream_merged(stream_id: str):
+    """Stream merged video+audio (e.g. YouTube 1080p). Used by Apple TV when playing merge URL."""
+    if not get_merge_session(stream_id):
+        raise HTTPException(status_code=404, detail="Stream not found or expired")
+    return StreamingResponse(
+        stream_merged_mp4_async(stream_id),
+        media_type="video/mp4",
+        headers={"Accept-Ranges": "bytes", "Cache-Control": "no-store"},
+    )
 
 
 @router.get("/activity", response_model=ApiResponse)
@@ -349,6 +363,7 @@ async def play_url(request: PlayRequest, db: Session = Depends(get_db)):
             "device": device_name,
             "message": result.get("message") or "Воспроизведение запущено",
             "method": result.get("method"),
+            "merge_used": result.get("merge_used", False),
         })
         return success_response(result)
     except Exception as e:

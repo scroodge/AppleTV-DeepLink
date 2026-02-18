@@ -5,7 +5,7 @@ WORKDIR /app
 # Create data directory for SQLite database
 RUN mkdir -p /app/data
 
-# Install system dependencies for pyatv (mDNS/Bonjour) and build tools for miniaudio
+# Install system dependencies for pyatv (mDNS/Bonjour), build tools, and ffmpeg for stream merge
 RUN apt-get update && apt-get install -y \
     avahi-daemon \
     avahi-utils \
@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     g++ \
     make \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies

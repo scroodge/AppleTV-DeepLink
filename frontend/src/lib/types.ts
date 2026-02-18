@@ -56,4 +56,5 @@ export interface ActivityEntry {
 	device?: string;
 	message: string;
 	method?: string;
+	merge_used?: boolean;
 }
