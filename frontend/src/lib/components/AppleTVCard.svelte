@@ -4,11 +4,26 @@
 	import SettingsModal from './SettingsModal.svelte';
 	import ToastContainer from './ToastContainer.svelte';
 	import { api } from '../api';
+	import type { ActivityEntry } from '../types';
 
 	let url: string = '';
 	let settingsOpen = false;
 	let loading = false;
 	let defaultDevice: { device_id: string; name: string } | null = null;
+	let activityLog: ActivityEntry[] = [];
+	let logPollInterval: ReturnType<typeof setInterval> | null = null;
+
+	async function loadActivityLog() {
+		if (!browser) return;
+		try {
+			const response = await api.getActivityLog(50);
+			if (response.ok && response.data?.entries) {
+				activityLog = response.data.entries;
+			}
+		} catch (e) {
+			// ignore
+		}
+	}
 
 	async function loadDefaultDevice() {
 		if (!browser) return;
@@ -40,8 +55,10 @@
 		}
 
 		loading = true;
+		logPollInterval = window.setInterval(loadActivityLog, 1500);
 		try {
 			const response = await api.playUrl(url, defaultDevice.device_id);
+			await loadActivityLog();
 			if (response.ok) {
 				showToast('URL отправлен на Apple TV', 'success');
 			} else {
@@ -50,14 +67,17 @@
 		} catch (error) {
 			console.error('Play URL failed:', error);
 			showToast('Ошибка отправки URL', 'error');
+			await loadActivityLog();
 		} finally {
 			loading = false;
+			if (logPollInterval) {
+				clearInterval(logPollInterval);
+				logPollInterval = null;
+			}
 		}
 	}
 
 	async function launch() {
-		// For MVP, "Launch" also calls play URL
-		// In future, this could launch a specific app
 		await sendToAppleTV();
 	}
 
@@ -74,8 +94,18 @@
 		loadDefaultDevice();
 	}
 
+	function formatTime(ts: string) {
+		try {
+			const d = new Date(ts);
+			return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+		} catch {
+			return ts;
+		}
+	}
+
 	onMount(() => {
 		loadDefaultDevice();
+		loadActivityLog();
 	});
 </script>
 
@@ -161,11 +191,48 @@
 	</div>
 </div>
 
+<div class="activity-log mt-6 max-w-2xl mx-auto">
+	<h2 class="text-sm font-semibold text-gray-600 mb-2">Журнал операций со ссылками</h2>
+	<div class="bg-gray-900 text-gray-100 rounded-lg p-3 font-mono text-xs overflow-x-auto max-h-48 overflow-y-auto">
+		{#if activityLog.length === 0}
+			<p class="text-gray-500">Пока нет записей. Отправьте ссылку на Apple TV.</p>
+		{:else}
+			{#each activityLog as entry, i (entry.ts + String(i) + (entry.message || ''))}
+				<div class="flex gap-2 py-1 border-b border-gray-700 last:border-0 items-start">
+					<span class="text-gray-500 shrink-0">{formatTime(entry.ts)}</span>
+					<span
+						class="shrink-0 font-semibold {entry.status === 'success'
+						? 'text-green-400'
+						: entry.status === 'error'
+							? 'text-red-400'
+							: 'text-yellow-400'}"
+					>
+						{entry.status === 'start' ? '…' : entry.status === 'success' ? 'OK' : 'ERR'}
+					</span>
+					<span class="min-w-0 break-all">
+						{#if entry.url}
+							<span class="text-gray-400">{entry.url}</span>
+							{#if entry.device}
+								<span class="text-gray-500"> → {entry.device}</span>
+							{/if}
+							<br />
+						{/if}
+						{entry.message}
+					</span>
+				</div>
+			{/each}
+		{/if}
+	</div>
+</div>
+
 <SettingsModal isOpen={settingsOpen} onClose={handleSettingsClose} />
 <ToastContainer />
 
 <style>
 	.appletv-card {
+		font-family: system-ui, -apple-system, sans-serif;
+	}
+	.activity-log {
 		font-family: system-ui, -apple-system, sans-serif;
 	}
 </style>

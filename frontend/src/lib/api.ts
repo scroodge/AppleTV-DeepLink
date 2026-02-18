@@ -1,6 +1,6 @@
 /** API client for backend communication */
 import { browser } from '$app/environment';
-import type { ApiResponse, DeviceInfo, PairedDevice, DefaultDevice, PairingStatus } from './types';
+import type { ApiResponse, DeviceInfo, PairedDevice, DefaultDevice, PairingStatus, ActivityEntry } from './types';
 
 const API_URL = (typeof window !== 'undefined' 
 	? (import.meta.env.PUBLIC_API_URL || 'http://localhost:8000')
@@ -118,5 +118,9 @@ export const api = {
 				body: JSON.stringify(data),
 			}
 		);
+	},
+
+	async getActivityLog(limit: number = 50): Promise<ApiResponse<{ entries: ActivityEntry[] }>> {
+		return request<{ entries: ActivityEntry[] }>(`/api/appletv/activity?limit=${limit}`);
 	},
 };

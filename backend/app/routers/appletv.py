@@ -8,6 +8,7 @@ import logging
 from app.database import get_db
 from app.models import Device, DefaultDevice
 from app.services.appletv_service import AppleTVService
+from app.activity_log import add as log_add, get as log_get
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,17 @@ async def get_paired_devices(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Get devices error: {e}", exc_info=True)
         return error_response("GET_DEVICES_FAILED", str(e))
+
+
+@router.get("/activity", response_model=ApiResponse)
+async def get_activity(limit: int = 50):
+    """Get recent URL operation log (newest first)."""
+    try:
+        entries = log_get(limit=min(limit, 100))
+        return success_response({"entries": entries})
+    except Exception as e:
+        logger.error(f"Get activity error: {e}", exc_info=True)
+        return error_response("GET_ACTIVITY_FAILED", str(e))
 
 
 @router.delete("/devices/{device_id}", response_model=ApiResponse)
@@ -294,34 +306,54 @@ async def submit_pin(
 @router.post("/play", response_model=ApiResponse)
 async def play_url(request: PlayRequest, db: Session = Depends(get_db)):
     """Play a URL on Apple TV."""
+    device_id = None
+    device_name = ""
+    url_truncated = (request.url or "")[:80] + ("..." if len(request.url or "") > 80 else "")
+
     try:
         device_id = request.device_id
-        
+
         # If no device_id provided, use default
         if not device_id:
             default = db.query(DefaultDevice).first()
             if not default:
+                log_add({"status": "error", "url": url_truncated, "device": "", "message": "No default device set"})
                 return error_response("NO_DEFAULT_DEVICE", "No default device set")
             device_id = default.device_id
-        
+
         # Get device from database
         device = db.query(Device).filter(Device.device_id == device_id).first()
         if not device:
+            log_add({"status": "error", "url": url_truncated, "device": "", "message": "Device not found"})
             return error_response("DEVICE_NOT_FOUND", f"Device {device_id} not found")
-        
+        device_name = device.name or device_id
+
+        log_add({"status": "start", "url": url_truncated, "device": device_name, "message": "Отправка на Apple TV…"})
+
         result = await appletv_service.play_url(
             url=request.url,
             device_id=device_id,
             address=device.address,
             credentials_json=device.credentials
         )
-        
+
         if result.get("status") == "UNSUPPORTED_URL":
-            return error_response("UNSUPPORTED_URL", result.get("message", "This URL is not supported for playback on this device."))
+            msg = result.get("message", "This URL is not supported for playback on this device.")
+            log_add({"status": "error", "url": url_truncated, "device": device_name, "message": msg})
+            return error_response("UNSUPPORTED_URL", msg)
+        log_add({
+            "status": "success",
+            "url": url_truncated,
+            "device": device_name,
+            "message": result.get("message") or "Воспроизведение запущено",
+            "method": result.get("method"),
+        })
         return success_response(result)
     except Exception as e:
+        err_msg = str(e)
+        log_add({"status": "error", "url": url_truncated, "device": device_name or (device_id or ""), "message": err_msg})
         logger.error(f"Play URL error: {e}", exc_info=True)
-        return error_response("PLAY_FAILED", str(e))
+        return error_response("PLAY_FAILED", err_msg)
 
 
 @router.post("/default", response_model=ApiResponse)

@@ -48,3 +48,12 @@ export interface ToastMessage {
 	type: 'success' | 'error' | 'info';
 	duration?: number;
 }
+
+export interface ActivityEntry {
+	ts: string;
+	status: 'start' | 'success' | 'error';
+	url?: string;
+	device?: string;
+	message: string;
+	method?: string;
+}
