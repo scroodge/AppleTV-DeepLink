@@ -73,10 +73,14 @@ export const api = {
 		});
 	},
 
-	async playUrl(url: string, deviceId?: string): Promise<ApiResponse<{ status: string; message: string }>> {
+	async playUrl(
+		url: string,
+		deviceId?: string,
+		quality?: string
+	): Promise<ApiResponse<{ status: string; message: string }>> {
 		return request<{ status: string; message: string }>('/api/appletv/play', {
 			method: 'POST',
-			body: JSON.stringify({ url, device_id: deviceId }),
+			body: JSON.stringify({ url, device_id: deviceId, quality: quality || 'auto' }),
 		});
 	},
 

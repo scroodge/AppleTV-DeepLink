@@ -223,13 +223,30 @@ class AppleTVService:
             raise
     
     @staticmethod
-    def _resolve_stream_url_blocking(url: str) -> Optional[str]:
-        """Try to resolve a YouTube/page URL to a direct stream URL (run in thread)."""
+    def _format_for_quality(quality: str) -> str:
+        """yt-dlp format string for requested quality (single stream preferred)."""
+        q = (quality or "auto").lower().strip()
+        if q == "auto" or not q:
+            return "best[ext=mp4]/best[ext=m4a]/best"
+        if q == "1080p":
+            return "best[height<=1080][ext=mp4]/best[height<=1080]/best"
+        if q == "720p":
+            return "best[height<=720][ext=mp4]/best[height<=720]/best"
+        if q == "480p":
+            return "best[height<=480][ext=mp4]/best[height<=480]/best"
+        if q == "360p":
+            return "best[height<=360][ext=mp4]/best[height<=360]/best"
+        return "best[ext=mp4]/best[ext=m4a]/best"
+
+    @staticmethod
+    def _resolve_stream_url_blocking(url: str, quality: str = "auto") -> Optional[Dict[str, Any]]:
+        """Resolve YouTube/page URL to direct stream URL; return dict with url and optional height/quality info."""
         if not HAS_YT_DLP or not yt_dlp:
             return None
         try:
+            format_str = AppleTVService._format_for_quality(quality)
             opts = {
-                "format": "best[ext=mp4]/best[ext=m4a]/best",
+                "format": format_str,
                 "skip_download": True,
                 "quiet": True,
                 "no_warnings": True,
@@ -238,22 +255,42 @@ class AppleTVService:
                 info = ydl.extract_info(url, download=False)
             if not info:
                 return None
-            # Single format gives top-level url
-            if info.get("url"):
-                return info["url"]
-            # Fallback: first format with url
-            for f in info.get("formats") or []:
-                if f.get("url"):
-                    return f["url"]
-            return None
+            result_url = info.get("url")
+            if not result_url:
+                for f in info.get("formats") or []:
+                    if f.get("url"):
+                        result_url = f["url"]
+                        break
+            if not result_url:
+                return None
+            # Build quality label so user can see chosen quality (e.g. in auto mode)
+            height = info.get("height")
+            if height is None and info.get("resolution"):
+                try:
+                    height = info["resolution"].split("x")[-1].strip()
+                except Exception:
+                    height = None
+            if height is None and info.get("requested_formats"):
+                for f in info["requested_formats"]:
+                    if f.get("height"):
+                        height = f["height"]
+                        break
+            format_note = info.get("format_note") or ""
+            if height:
+                quality_label = f"{height}p"
+            elif format_note:
+                quality_label = format_note
+            else:
+                quality_label = None
+            return {"url": result_url, "quality_label": quality_label}
         except Exception as e:
             logger.warning(f"Could not resolve stream URL: {e}")
             return None
 
-    async def _resolve_stream_url(self, url: str) -> Optional[str]:
-        """Resolve YouTube/page URL to direct stream URL (non-blocking)."""
+    async def _resolve_stream_url(self, url: str, quality: str = "auto") -> Optional[Dict[str, Any]]:
+        """Resolve YouTube/page URL to direct stream URL (non-blocking). Returns dict with url and optional quality_label."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._resolve_stream_url_blocking, url)
+        return await loop.run_in_executor(None, self._resolve_stream_url_blocking, url, quality)
 
     def _is_direct_media_url(self, url: Optional[str]) -> bool:
         """Check if URL looks like direct media (stream), not a web/page link."""
@@ -292,7 +329,8 @@ class AppleTVService:
         url: str,
         device_id: str,
         address: str,
-        credentials_json: Optional[str] = None
+        credentials_json: Optional[str] = None,
+        quality: str = "auto",
     ) -> Dict[str, Any]:
         """Play a URL on Apple TV using AirPlay or launch deep link via Apps."""
         try:
@@ -413,12 +451,14 @@ class AppleTVService:
                 stream = atv_instance.stream
                 if stream:
                     play_url_final = url
+                    resolved_quality = None
                     if is_deep_link and not is_direct_media:
                         # Try to resolve to direct stream (e.g. YouTube -> direct URL)
-                        resolved = await self._resolve_stream_url(url)
+                        resolved = await self._resolve_stream_url(url, quality)
                         if resolved:
-                            play_url_final = resolved
-                            logger.info(f"Resolved URL to direct stream, playing via AirPlay")
+                            play_url_final = resolved["url"]
+                            resolved_quality = resolved.get("quality_label")
+                            logger.info(f"Resolved URL to direct stream (quality: {resolved_quality or '?'}), playing via AirPlay")
                         else:
                             return {
                                 "status": "UNSUPPORTED_URL",
@@ -427,10 +467,14 @@ class AppleTVService:
                             }
                     logger.info("Playing URL via AirPlay: %s", play_url_final[:80] + ("..." if len(play_url_final) > 80 else ""))
                     await stream.play_url(play_url_final)
+                    msg = f"Воспроизведение на {atv.name}"
+                    if resolved_quality:
+                        msg += f" • качество: {resolved_quality}"
                     return {
                         "status": "SUCCESS",
-                        "message": f"Playing {url} on {atv.name}",
+                        "message": msg,
                         "method": "airplay",
+                        "resolved_quality": resolved_quality,
                     }
                 else:
                     raise ValueError("Neither Apps nor Stream interface available on this device")

@@ -7,6 +7,7 @@
 	import type { ActivityEntry } from '../types';
 
 	let url: string = '';
+	let quality: string = 'auto';
 	let settingsOpen = false;
 	let loading = false;
 	let defaultDevice: { device_id: string; name: string } | null = null;
@@ -57,7 +58,7 @@
 		loading = true;
 		logPollInterval = window.setInterval(loadActivityLog, 1500);
 		try {
-			const response = await api.playUrl(url, defaultDevice.device_id);
+			const response = await api.playUrl(url, defaultDevice.device_id, quality);
 			await loadActivityLog();
 			if (response.ok) {
 				showToast('URL отправлен на Apple TV', 'success');
@@ -75,10 +76,6 @@
 				logPollInterval = null;
 			}
 		}
-	}
-
-	async function launch() {
-		await sendToAppleTV();
 	}
 
 	function showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
@@ -132,27 +129,34 @@
 					}
 				}}
 			/>
+			<div class="flex items-center gap-3 mt-2">
+				<label for="quality-select" class="text-sm text-gray-600">Качество:</label>
+				<select
+					id="quality-select"
+					bind:value={quality}
+					class="border rounded px-2 py-1 text-sm"
+					disabled={loading}
+				>
+					<option value="auto">Авто (лучшее)</option>
+					<option value="1080p">1080p</option>
+					<option value="720p">720p</option>
+					<option value="480p">480p</option>
+					<option value="360p">360p</option>
+				</select>
+				<span class="text-xs text-gray-500">для YouTube и подобных</span>
+			</div>
 			<p class="text-xs text-gray-500 mt-1">
 				Apple TV 3-го поколения: поддерживаются прямые ссылки (.mp4, .m3u8) и ссылки YouTube (воспроизведение через извлечение потока). Netflix и приложения — только на Apple TV 4-го поколения (tvOS).
 			</p>
 		</div>
 
-		<div class="flex gap-2">
-			<button
-				class="flex-1 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed"
-				on:click={sendToAppleTV}
-				disabled={loading || !url.trim()}
-			>
-				{loading ? 'Отправка...' : 'Отправить на Apple TV'}
-			</button>
-			<button
-				class="flex-1 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed"
-				on:click={launch}
-				disabled={loading || !url.trim()}
-			>
-				Запустить
-			</button>
-		</div>
+		<button
+			class="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed"
+			on:click={sendToAppleTV}
+			disabled={loading || !url.trim()}
+		>
+			{loading ? 'Отправка...' : 'Отправить на Apple TV'}
+		</button>
 
 		{#if defaultDevice}
 			<p class="text-sm text-gray-600 text-center">

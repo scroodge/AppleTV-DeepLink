@@ -46,6 +46,7 @@ class PairPinRequest(BaseModel):
 class PlayRequest(BaseModel):
     url: str
     device_id: Optional[str] = None
+    quality: Optional[str] = "auto"  # auto | 1080p | 720p | 480p | 360p
 
 
 class DefaultDeviceRequest(BaseModel):
@@ -334,7 +335,8 @@ async def play_url(request: PlayRequest, db: Session = Depends(get_db)):
             url=request.url,
             device_id=device_id,
             address=device.address,
-            credentials_json=device.credentials
+            credentials_json=device.credentials,
+            quality=request.quality or "auto",
         )
 
         if result.get("status") == "UNSUPPORTED_URL":
