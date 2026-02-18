@@ -78,6 +78,29 @@
 		}
 	}
 
+	async function stopPlayback() {
+		if (!defaultDevice) {
+			showToast('Выберите устройство по умолчанию в настройках', 'error');
+			return;
+		}
+		loading = true;
+		try {
+			const response = await api.stopPlayback();
+			await loadActivityLog();
+			if (response.ok) {
+				showToast('Трансляция остановлена', 'success');
+			} else {
+				showToast(response.error?.message || 'Ошибка остановки', 'error');
+			}
+		} catch (error) {
+			console.error('Stop failed:', error);
+			showToast('Ошибка остановки', 'error');
+			await loadActivityLog();
+		} finally {
+			loading = false;
+		}
+	}
+
 	function showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
 		if (!browser) return;
 		const event = new CustomEvent('toast:show', {
@@ -145,18 +168,33 @@
 				</select>
 				<span class="text-xs text-gray-500">для YouTube и подобных</span>
 			</div>
+			<p class="text-xs text-amber-600 mt-1">
+				720p/1080p на YouTube — часто только видео (без звука): сайт отдаёт потоки раздельно. Сервисы вроде Y2mate склеивают их на сервере (ffmpeg), поэтому там есть 1080p со звуком.
+			</p>
 			<p class="text-xs text-gray-500 mt-1">
 				Apple TV 3-го поколения: поддерживаются прямые ссылки (.mp4, .m3u8) и ссылки YouTube (воспроизведение через извлечение потока). Netflix и приложения — только на Apple TV 4-го поколения (tvOS).
 			</p>
 		</div>
 
-		<button
-			class="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed"
-			on:click={sendToAppleTV}
-			disabled={loading || !url.trim()}
-		>
-			{loading ? 'Отправка...' : 'Отправить на Apple TV'}
-		</button>
+		<div class="flex gap-2">
+			<button
+				class="flex-1 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed"
+				on:click={sendToAppleTV}
+				disabled={loading || !url.trim()}
+			>
+				{loading ? 'Отправка...' : 'Отправить на Apple TV'}
+			</button>
+			<button
+				class="px-4 py-2 border border-gray-400 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+				on:click={stopPlayback}
+				disabled={loading}
+			>
+				Остановить трансляцию
+			</button>
+		</div>
+		<p class="text-xs text-gray-500">
+			Чтобы сменить качество: нажмите «Остановить трансляцию», выберите качество в списке и снова «Отправить на Apple TV».
+		</p>
 
 		{#if defaultDevice}
 			<p class="text-sm text-gray-600 text-center">

@@ -84,6 +84,12 @@ export const api = {
 		});
 	},
 
+	async stopPlayback(): Promise<ApiResponse<{ status: string; message: string }>> {
+		return request<{ status: string; message: string }>('/api/appletv/stop', {
+			method: 'POST',
+		});
+	},
+
 	async setDefaultDevice(deviceId: string): Promise<ApiResponse<{ device_id: string }>> {
 		return request<{ device_id: string }>('/api/appletv/default', {
 			method: 'POST',

@@ -224,14 +224,17 @@ class AppleTVService:
     
     @staticmethod
     def _format_for_quality(quality: str) -> str:
-        """yt-dlp format string for requested quality (single stream preferred)."""
+        """yt-dlp format string. YouTube 720p+ is usually DASH (video-only); we take best single URL.
+        Combined (video+audio) is often only 360p. For 720p/1080p we use bestvideo to get resolution (no audio)."""
         q = (quality or "auto").lower().strip()
         if q == "auto" or not q:
+            # Prefer best combined, then best single format
             return "best[ext=mp4]/best[ext=m4a]/best"
         if q == "1080p":
-            return "best[height<=1080][ext=mp4]/best[height<=1080]/best"
+            # YouTube 1080p = DASH only; take bestvideo for resolution (video-only, no audio)
+            return "bestvideo[height<=1080][ext=mp4]/bestvideo[height<=1080]/best[height<=1080]/best"
         if q == "720p":
-            return "best[height<=720][ext=mp4]/best[height<=720]/best"
+            return "bestvideo[height<=720][ext=mp4]/bestvideo[height<=720]/best[height<=720]/best"
         if q == "480p":
             return "best[height<=480][ext=mp4]/best[height<=480]/best"
         if q == "360p":
@@ -483,7 +486,47 @@ class AppleTVService:
         except Exception as e:
             logger.error(f"Error playing/launching URL: {e}", exc_info=True)
             raise
-    
+
+    async def stop_playback(
+        self,
+        device_id: str,
+        address: str,
+        credentials_json: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Stop AirPlay stream: send Menu (back) to exit playback and end the stream."""
+        try:
+            loop = asyncio.get_event_loop()
+            atvs = await scan(
+                loop=loop,
+                hosts=[str(address)],
+                protocol={Protocol.AirPlay, Protocol.Companion, Protocol.MRP},
+            )
+            if not atvs:
+                raise ValueError(f"Device not found at {address}")
+            atv = atvs[0]
+            storage = DatabaseStorage(credentials_json)
+            device_identifier = str(atv.identifier) if hasattr(atv, "identifier") else str(atv.address)
+            stored_creds = storage.load(device_identifier)
+            if stored_creds:
+                creds_dict = stored_creds if isinstance(stored_creds, dict) else {}
+                airplay_service = atv.get_service(Protocol.AirPlay)
+                if airplay_service:
+                    airplay_creds = creds_dict.get("airplay") or creds_dict.get("AirPlay") or creds_dict.get("credentials")
+                    if airplay_creds:
+                        airplay_service.credentials = airplay_creds if isinstance(airplay_creds, str) else airplay_creds.get("credentials") or airplay_creds
+            atv_instance = await connect(atv, loop=loop)
+            try:
+                rc = atv_instance.remote_control
+                if rc:
+                    await rc.menu()
+                    return {"status": "SUCCESS", "message": f"Трансляция остановлена на {atv.name}"}
+                raise ValueError("Remote control not available")
+            finally:
+                atv_instance.close()
+        except Exception as e:
+            logger.error(f"Error stopping playback: {e}", exc_info=True)
+            raise
+
     def get_stored_credentials(self, credentials_json: Optional[str]) -> Dict[str, Any]:
         """Get credentials from database JSON."""
         storage = DatabaseStorage(credentials_json)

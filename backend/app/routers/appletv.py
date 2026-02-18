@@ -358,6 +358,36 @@ async def play_url(request: PlayRequest, db: Session = Depends(get_db)):
         return error_response("PLAY_FAILED", err_msg)
 
 
+@router.post("/stop", response_model=ApiResponse)
+async def stop_playback(db: Session = Depends(get_db)):
+    """Stop (pause) playback on default Apple TV."""
+    try:
+        default = db.query(DefaultDevice).first()
+        if not default:
+            log_add({"status": "error", "url": "", "device": "", "message": "Устройство по умолчанию не задано"})
+            return error_response("NO_DEFAULT_DEVICE", "No default device set")
+        device = db.query(Device).filter(Device.device_id == default.device_id).first()
+        if not device:
+            log_add({"status": "error", "url": "", "device": "", "message": "Устройство не найдено"})
+            return error_response("DEVICE_NOT_FOUND", "Device not found")
+        result = await appletv_service.stop_playback(
+            device_id=device.device_id,
+            address=device.address,
+            credentials_json=device.credentials,
+        )
+        log_add({
+            "status": "success",
+            "url": "",
+            "device": device.name or device.device_id,
+            "message": result.get("message") or "Трансляция остановлена",
+        })
+        return success_response(result)
+    except Exception as e:
+        log_add({"status": "error", "url": "", "device": "", "message": str(e)})
+        logger.error(f"Stop playback error: {e}", exc_info=True)
+        return error_response("STOP_FAILED", str(e))
+
+
 @router.post("/default", response_model=ApiResponse)
 async def set_default_device(request: DefaultDeviceRequest, db: Session = Depends(get_db)):
     """Set default Apple TV device."""
