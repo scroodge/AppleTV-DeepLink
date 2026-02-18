@@ -1,0 +1,40 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: deep-link-backend
+    # Bridge network for macOS/Windows compatibility
+    # Note: mDNS discovery may be limited - see README for troubleshooting
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/data:/app/data
+    environment:
+      - DATABASE_URL=sqlite:////app/data/appletv.db
+    networks:
+      - app-network
+    restart: unless-stopped
+    # For Linux with host network (better mDNS), uncomment below and comment ports/networks:
+    # network_mode: host
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: deep-link-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - PUBLIC_API_URL=http://localhost:8000
+      - PORT=3000
+      - HOST=0.0.0.0
+    depends_on:
+      - backend
+    networks:
+      - app-network
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
