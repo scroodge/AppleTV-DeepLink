@@ -670,15 +670,21 @@ class AppleTVService:
                                         logger.warning("HLS pre-warm incomplete, but proceeding anyway")
                                     logger.info("Sending remux URL to Apple TV via AirPlay...")
                                     logger.info("NOTE: If playback doesn't start, check that Apple TV can access: %s", play_url_final)
+                                    logger.info("Apple TV IP: %s, Stream URL: %s", address, play_url_final)
                                     result_500 = await play_url_with_500_handling(play_url_final, "HLS remux")
                                     if result_500:
                                         # Check if Apple TV requested the stream (wait a bit for request)
-                                        await asyncio.sleep(2.0)  # Give Apple TV time to request stream
+                                        await asyncio.sleep(3.0)  # Give Apple TV more time to request stream
                                         from app.stream_merge import get_merge_session
                                         session = get_merge_session(stream_id)
                                         if session and not session.get("requested", False):
-                                            logger.warning("[stream %s] Apple TV did not request stream - URL may not be accessible from Apple TV", stream_id)
-                                            result_500["message"] += f" ВНИМАНИЕ: Apple TV не запросил поток. Проверьте доступность URL с Apple TV: {play_url_final}"
+                                            logger.warning("[stream %s] Apple TV (%s) did not request stream - URL may not be accessible from Apple TV", stream_id, address)
+                                            logger.warning("[stream %s] Troubleshooting: 1) Check if %s is accessible from Apple TV network", stream_id, play_url_final)
+                                            logger.warning("[stream %s] Troubleshooting: 2) Check firewall on server (port 8100)", stream_id)
+                                            logger.warning("[stream %s] Troubleshooting: 3) Verify STREAM_BASE_URL matches server IP accessible from Apple TV", stream_id)
+                                            result_500["message"] += f" ВНИМАНИЕ: Apple TV ({address}) не запросил поток. Проверьте: 1) доступность {play_url_final} с Apple TV, 2) firewall (порт 8100), 3) правильность STREAM_BASE_URL."
+                                        else:
+                                            logger.info("[stream %s] Apple TV successfully requested stream", stream_id)
                                         return result_500
                                 except Exception as e2:
                                     err_detail = str(e2).strip() or type(e2).__name__
