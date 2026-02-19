@@ -143,6 +143,8 @@ async def stream_merged(stream_id: str, request: Request):
     user_agent = request.headers.get("user-agent", "unknown")
     logger.info("[stream %s] Stream requested from %s (User-Agent: %s) (GET /stream/%s)", stream_id, client_host, user_agent[:50], stream_id)
     session = get_merge_session(stream_id)
+    if session:
+        session["requested"] = True  # Mark that Apple TV requested the stream
     if not session:
         raise HTTPException(status_code=404, detail="Stream not found or expired")
     if "consumers" in session:

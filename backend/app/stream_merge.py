@@ -131,6 +131,7 @@ def create_merge_session(video_url: str, audio_url: str, height: Optional[int] =
         "consumers": consumers,
         "buffer_list": buffer_list,
         "buffer_lock": buffer_lock,
+        "requested": False,  # Track if Apple TV requested the stream
     }
     t = threading.Thread(target=_producer_merge, args=(stream_id, broadcast_queue), daemon=True)
     t.start()
@@ -181,6 +182,7 @@ def create_hls_session(hls_url: str) -> str:
         "consumers": consumers,
         "buffer_list": buffer_list,
         "buffer_lock": buffer_lock,
+        "requested": False,  # Track if Apple TV requested the stream
     }
     t = threading.Thread(target=_producer_hls, args=(stream_id, broadcast_queue), daemon=True)
     t.start()

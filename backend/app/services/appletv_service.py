@@ -604,9 +604,13 @@ class AppleTVService:
                         except HttpError as err:
                             if err.status_code == 500:
                                 logger.info(f"HTTP 500 from Apple TV (known pyatv issue with /playback-info) - playback likely started{(' - ' + context) if context else ''}, treating as success")
+                                # For remux streams, add warning about checking stream accessibility
                                 warning_msg = ""
                                 if self._last_merge_used and "/stream/" in url_to_play:
                                     warning_msg = f" Если воспроизведение не началось, проверьте доступность URL с Apple TV: {url_to_play}"
+                                # For direct URLs (YouTube etc), add general note
+                                elif not self._last_merge_used and ("googlevideo.com" in url_to_play or "youtube.com" in url_to_play):
+                                    warning_msg = " Если воспроизведение не началось, проверьте подключение Apple TV к интернету и доступность YouTube."
                                 return {
                                     "status": "SUCCESS",
                                     "message": f"Открыто на {atv.name}" + (f" ({context})" if context else "") + warning_msg,
@@ -621,6 +625,8 @@ class AppleTVService:
                                 warning_msg = ""
                                 if self._last_merge_used and "/stream/" in url_to_play:
                                     warning_msg = f" Если воспроизведение не началось, проверьте доступность URL с Apple TV: {url_to_play}"
+                                elif not self._last_merge_used and ("googlevideo.com" in url_to_play or "youtube.com" in url_to_play):
+                                    warning_msg = " Если воспроизведение не началось, проверьте подключение Apple TV к интернету и доступность YouTube."
                                 return {
                                     "status": "SUCCESS",
                                     "message": f"Открыто на {atv.name}" + (f" ({context})" if context else "") + warning_msg,
@@ -666,6 +672,13 @@ class AppleTVService:
                                     logger.info("NOTE: If playback doesn't start, check that Apple TV can access: %s", play_url_final)
                                     result_500 = await play_url_with_500_handling(play_url_final, "HLS remux")
                                     if result_500:
+                                        # Check if Apple TV requested the stream (wait a bit for request)
+                                        await asyncio.sleep(2.0)  # Give Apple TV time to request stream
+                                        from app.stream_merge import get_merge_session
+                                        session = get_merge_session(stream_id)
+                                        if session and not session.get("requested", False):
+                                            logger.warning("[stream %s] Apple TV did not request stream - URL may not be accessible from Apple TV", stream_id)
+                                            result_500["message"] += f" ВНИМАНИЕ: Apple TV не запросил поток. Проверьте доступность URL с Apple TV: {play_url_final}"
                                         return result_500
                                 except Exception as e2:
                                     err_detail = str(e2).strip() or type(e2).__name__
@@ -691,6 +704,13 @@ class AppleTVService:
                                         logger.info("Direct stream failed, retrying with merge (quality: %s)", resolved_quality)
                                         result_500 = await play_url_with_500_handling(play_url_final, f"YouTube {resolved_quality} merge")
                                         if result_500:
+                                            # Check if Apple TV requested the stream (wait a bit for request)
+                                            await asyncio.sleep(2.0)  # Give Apple TV time to request stream
+                                            from app.stream_merge import get_merge_session
+                                            session = get_merge_session(stream_id)
+                                            if session and not session.get("requested", False):
+                                                logger.warning("[stream %s] Apple TV did not request stream - URL may not be accessible from Apple TV", stream_id)
+                                                result_500["message"] += f" ВНИМАНИЕ: Apple TV не запросил поток. Проверьте доступность URL с Apple TV: {play_url_final}"
                                             return result_500
                                     else:
                                         raise play_err
