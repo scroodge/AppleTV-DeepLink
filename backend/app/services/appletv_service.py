@@ -15,6 +15,7 @@ from typing import List, Optional, Dict, Any, Tuple, Union
 from pyatv import scan, pair, connect
 from pyatv.const import Protocol, PairingRequirement
 from pyatv.interface import AppleTV, PairingHandler
+from pyatv.exceptions import HttpError
 from app.services.storage_service import DatabaseStorage
 
 logger = logging.getLogger(__name__)
@@ -628,12 +629,25 @@ class AppleTVService:
                                     logger.info("Sending remux URL to Apple TV via AirPlay...")
                                     try:
                                         await stream.play_url(play_url_final)
+                                    except HttpError as playback_err:
+                                        # HTTP 500 on /playback-info is a known pyatv issue - playback may have started
+                                        # but Apple TV doesn't return status. This happens in _wait_for_media_to_end()
+                                        # after URL was successfully sent. For HLS remux, treat HTTP 500 as success.
+                                        if playback_err.status_code == 500:
+                                            logger.info("HTTP 500 from Apple TV (known pyatv issue with /playback-info) - playback likely started, treating as success")
+                                            return {
+                                                "status": "SUCCESS",
+                                                "message": f"Открыто на {atv.name} (HLS remux)",
+                                                "method": "airplay_remux",
+                                                "merge_used": True,
+                                            }
+                                        # Other HTTP errors are real failures
+                                        raise playback_err
                                     except Exception as playback_err:
                                         err_str = str(playback_err).lower()
-                                        # HTTP 500 on /playback-info is a known pyatv issue - playback may have started
-                                        # but Apple TV doesn't return status. If it's just playback-info error, consider it success.
-                                        if "playback-info" in err_str and ("500" in err_str or "internal server error" in err_str):
-                                            logger.info("HTTP 500 on /playback-info (known pyatv issue) - playback likely started, treating as success")
+                                        # Also check for HTTP 500 in error message (fallback)
+                                        if "500" in err_str and "internal server error" in err_str:
+                                            logger.info("HTTP 500 detected in error message - playback likely started, treating as success")
                                             return {
                                                 "status": "SUCCESS",
                                                 "message": f"Открыто на {atv.name} (HLS remux)",
