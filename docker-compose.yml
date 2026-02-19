@@ -6,15 +6,16 @@ services:
     container_name: deep-link-backend
     # Bridge network for macOS/Windows compatibility
     # Note: mDNS discovery may be limited - see README for troubleshooting
-    # Explicit 0.0.0.0 so port is reachable from LAN (Apple TV must fetch stream from Mac IP)
+    # Port 8100 on host (container stays 8000) so it doesn't conflict with e.g. Portainer on 8000
+    # Explicit 0.0.0.0 so port is reachable from LAN (Apple TV must fetch stream from host IP)
     ports:
-      - "0.0.0.0:8000:8000"
+      - "0.0.0.0:8100:8000"
     volumes:
       - ./backend/data:/app/data
     environment:
       - DATABASE_URL=sqlite:////app/data/appletv.db
-      # URL по которому Apple TV достанет поток (склейка 720p/1080p). Укажите IP вашего ПК в LAN, напр. http://192.168.1.5:8000
-      - STREAM_BASE_URL=${STREAM_BASE_URL:-http://localhost:8000}
+      # URL по которому Apple TV достанет поток. Укажите IP хоста в LAN и порт 8100, напр. http://192.168.1.5:8100
+      - STREAM_BASE_URL=${STREAM_BASE_URL:-http://localhost:8100}
     networks:
       - app-network
     restart: unless-stopped
@@ -29,7 +30,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - PUBLIC_API_URL=http://localhost:8000
+      - PUBLIC_API_URL=http://localhost:8100
       - PORT=3000
       - HOST=0.0.0.0
     depends_on:

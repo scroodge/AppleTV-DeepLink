@@ -43,7 +43,7 @@ Apple TV 1st generation (2007) does not support AirPlay or modern protocols. The
 ```
 ┌─────────────────┐         ┌─────────────────┐         ┌──────────────┐
 │  SvelteKit App  │ ──────> │   FastAPI       │ ──────> │   SQLite     │
-│   (Port 3000)   │  HTTP   │   (Port 8000)   │         │   Database   │
+│   (Port 3000)   │  HTTP   │   (Port 8100)   │         │   Database   │
 └─────────────────┘         └─────────────────┘         └──────────────┘
                                       │
                                       │ (host network)
@@ -72,8 +72,8 @@ Apple TV 1st generation (2007) does not support AirPlay or modern protocols. The
 
 3. **Access the application**:
    - Frontend: http://localhost:3000
-   - Backend API: http://localhost:8000
-   - API Docs: http://localhost:8000/docs
+   - Backend API: http://localhost:8100
+   - API Docs: http://localhost:8100/docs
 
 ## Usage
 
@@ -132,10 +132,10 @@ Apple TV 1st generation (2007) does not support AirPlay or modern protocols. The
 
 Для YouTube при выборе **720p** или **1080p** бэкенд может склеивать видео- и аудиопоток через **ffmpeg** и отдавать один поток на Apple TV (со звуком). Для этого Apple TV должен иметь доступ по HTTP к бэкенду.
 
-- Задайте переменную **`STREAM_BASE_URL`** — URL, по которому Apple TV сможет запросить поток (обычно это IP вашего ПК в локальной сети и порт 8000).
-- Пример: на хосте с IP `192.168.1.5` и портом 8000 задайте в `docker-compose.yml` или в `.env`:
+- Задайте переменную **`STREAM_BASE_URL`** — URL, по которому Apple TV сможет запросить поток (обычно это IP вашего ПК в локальной сети и порт 8100).
+- Пример: на хосте с IP `192.168.1.5` задайте в `docker-compose.yml` или в `.env`:
   ```bash
-  STREAM_BASE_URL=http://192.168.1.5:8000
+  STREAM_BASE_URL=http://192.168.1.5:8100
   ```
 - Перезапустите контейнеры. После этого при выборе 720p/1080p для YouTube будет использоваться склейка на сервере и воспроизведение со звуком.
 
@@ -144,7 +144,7 @@ Apple TV 1st generation (2007) does not support AirPlay or modern protocols. The
 1. **Журнал на странице** — внизу страницы в блоке «Журнал операций со ссылками» после успешной отправки YouTube 720p/1080p в сообщении должно быть: **«качество: 1080p • склейка на сервере»**. Если видите только «качество: 1080p» без «склейка на сервере» — использовался один поток (часто без звука).
 2. **По звуку** — включите на Apple TV воспроизведение с качеством 1080p: если слышен звук, склейка работает. Если картинка 1080p, но звука нет — Apple TV не достучался до `STREAM_BASE_URL` или merge не сработал.
 3. **Логи бэкенда** — в логах контейнера должна быть строка `Using server merge stream (quality: 1080p)`. Ошибки merge: `Merge fallback failed` или отсутствие этой строки при 1080p.
-4. **Проверка STREAM_BASE_URL** — с другого устройства в той же Wi‑Fi откройте в браузере `http://<ваш_STREAM_BASE_URL>/health` (например `http://192.168.100.122:8000/health`). Должен вернуться `{"status":"ok"}`. Если страница не открывается — Apple TV тоже не сможет загрузить поток.
+4. **Проверка STREAM_BASE_URL** — с другого устройства в той же Wi‑Fi откройте в браузере `http://<ваш_STREAM_BASE_URL>/health` (например `http://192.168.100.122:8100/health`). Должен вернуться `{"status":"ok"}`. Если страница не открывается — Apple TV тоже не сможет загрузить поток.
 
 **Если на Apple TV «An error occurred loading» при 1080p (склейка):**
 - Убедитесь, что `STREAM_BASE_URL` — IP вашего Mac/ПК в той же сети, что и Apple TV (не `localhost`). Проверьте доступность по пункту 4 выше.
@@ -168,17 +168,17 @@ docker compose logs -f backend
    - Ожидаемый IP Apple TV в локальной сети — что-то вроде `192.168.x.x`. Если видите другой IP (например внешний) — запрос мог прийти не от Apple TV.
 4. По окончании воспроизведения: `[stream XXXXXX] FFmpeg: stream finished`
 
-Если видите шаг 1 и 3, но нет шага 2 до шага 3 — клиент запросил поток раньше, чем FFmpeg успел отдать первые данные (можно попробовать снова или 720p). Если шага 3 нет — Apple TV не достучался до `STREAM_BASE_URL` (проверьте **фаервол Mac**: Системные настройки → Сеть → Фаервол → Параметры: разрешите входящие на порт 8000 для локальной сети или отключите фаервол для проверки).
+Если видите шаг 1 и 3, но нет шага 2 до шага 3 — клиент запросил поток раньше, чем FFmpeg успел отдать первые данные (можно попробовать снова или 720p). Если шага 3 нет — Apple TV не достучался до `STREAM_BASE_URL` (проверьте **фаервол**: разрешите входящие на порт 8100 для локальной сети или отключите фаервол для проверки).
 
 **Если в логе «Stream requested from» показывается не локальный IP (например 172.217.x.x или 151.101.x.x)** — до эндпоинта потока доходят только запросы через прокси/туннель (браузер с веб-приложением). Apple TV получает URL `http://<STREAM_BASE_URL>/api/appletv/stream/xxx` и должен подключаться к Mac напрямую; раз в логах ни разу нет IP Apple TV (192.168.100.105) — **запрос от Apple TV до сервера не доходит** («An error occurred loading»).
 
 **Проверка «кто достучился до потока»:**
-1. Запустите воспроизведение 1080p, в логах найдите строку вида `Playing URL via AirPlay: http://192.168.100.122:8000/api/appletv/stream/XXXXXXXX`.
-2. С **iPhone в той же Wi‑Fi** откройте в Safari **точно этот URL** (скопируйте из лога, подставьте свой IP и stream id). Не открывайте приложение по туннелю — введите адрес вручную: `http://192.168.100.122:8000/api/appletv/stream/XXXXXXXX`.
+1. Запустите воспроизведение 1080p, в логах найдите строку вида `Playing URL via AirPlay: http://192.168.100.122:8100/api/appletv/stream/XXXXXXXX`.
+2. С **iPhone в той же Wi‑Fi** откройте в Safari **точно этот URL** (скопируйте из лога, подставьте свой IP и stream id). Не открывайте приложение по туннелю — введите адрес вручную: `http://192.168.100.122:8100/api/appletv/stream/XXXXXXXX`.
 3. Сразу посмотрите логи: `docker compose logs --tail 20 backend`. Должна появиться строка **`Stream requested from 192.168.100.xxx`** (IP телефона). Если видео в Safari на iPhone пошло и в логе виден локальный IP — доступ из локальной сети работает, проблема только в том, что до сервера не доходит именно Apple TV (фаервол/сеть для Apple TV, перезагрузка Apple TV, другая сеть).
-4. Если и при открытии с iPhone в логе по-прежнему только 172.217.x.x — вы открыли ссылку не с телефона или не по локальному адресу; откройте именно с iPhone, введя в Safari `http://192.168.100.122:8000/...` вручную.
+4. Если и при открытии с iPhone в логе по-прежнему только 172.217.x.x — вы открыли ссылку не с телефона или не по локальному адресу; откройте именно с iPhone, введя в Safari `http://192.168.100.122:8100/...` вручную.
 
-**1080p в Docker:** Порт бэкенда привязан к `0.0.0.0:8000`, чтобы к нему могли подключаться устройства в локальной сети (в т.ч. Apple TV). Проверка с телефона в той же Wi‑Fi: откройте `http://<IP_Mac>:8000/health` — должен вернуться `{"status":"ok"}`. Если не открывается — проверьте фаервол Mac (разрешить входящие на порт 8000) или настройки Docker Desktop. Один и тот же поток теперь могут запрашивать несколько клиентов (например браузер и Apple TV): каждый получит свою копию потока.
+**1080p в Docker:** Порт бэкенда на хосте — **8100** (в контейнере 8000), чтобы не конфликтовать с другими сервисами (например Portainer на 8000). Проверка с телефона в той же Wi‑Fi: откройте `http://<IP_хоста>:8100/health` — должен вернуться `{"status":"ok"}`. Если не открывается — проверьте фаервол (разрешить входящие на порт 8100). Один и тот же поток могут запрашивать несколько клиентов (браузер и Apple TV): каждый получит свою копию потока.
 
 ### Удаление и изменение устройств
 
@@ -281,7 +281,7 @@ cd backend
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8100
 ```
 
 ### Frontend Development
@@ -298,7 +298,7 @@ npm run dev
 - `DATABASE_URL`: SQLite database URL (default: `sqlite:///./appletv.db`)
 
 **Frontend**:
-- `PUBLIC_API_URL`: Backend API URL (default: `http://localhost:8000`)
+- `PUBLIC_API_URL`: Backend API URL (default: `http://localhost:8100`)
 
 ## API Endpoints
 
@@ -310,7 +310,7 @@ npm run dev
 - `POST /api/appletv/default` - Set default device
 - `GET /api/appletv/default` - Get default device
 
-See http://localhost:8000/docs for interactive API documentation.
+See http://localhost:8100/docs for interactive API documentation.
 
 ## Security Notes
 
