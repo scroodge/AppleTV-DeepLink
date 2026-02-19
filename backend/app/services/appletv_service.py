@@ -226,8 +226,9 @@ class AppleTVService:
         Combined (video+audio) is often only 360p. For 720p/1080p we use bestvideo to get resolution (no audio)."""
         q = (quality or "auto").lower().strip()
         if q == "auto" or not q:
-            # Prefer best combined, then best single format
-            return "best[ext=mp4]/best[ext=m4a]/best"
+            # Prefer best combined format (video+audio) for AirPlay RTSP compatibility
+            # DASH-only streams (video-only or audio-only) cause RTSP SETUP 400 errors
+            return "best[ext=mp4]/best"
         if q == "1080p":
             # YouTube 1080p = DASH only; take bestvideo for resolution (video-only, no audio)
             return "bestvideo[height<=1080][ext=mp4]/bestvideo[height<=1080]/best[height<=1080]/best"
@@ -330,6 +331,31 @@ class AppleTVService:
         ]
         url_lower = url.lower()
         return any(pattern in url_lower for pattern in deep_link_patterns) or url.startswith('http')
+
+    @staticmethod
+    def _youtube_deep_link_url(url: str) -> Optional[str]:
+        """Convert YouTube page URL to youtube:// deep link for Apple TV (plays in YouTube app, no conversion).
+        See https://www.home-assistant.io/integrations/apple_tv/ — YouTube: youtube://www.youtube.com/watch?v=VIDEO_ID"""
+        if not url or "youtube.com" not in url.lower() and "youtu.be" not in url.lower():
+            return None
+        video_id = None
+        if "youtu.be/" in url.lower():
+            try:
+                from urllib.parse import urlparse
+                path = urlparse(url).path.strip("/")
+                video_id = path.split("?")[0].split("/")[0] if path else None
+            except Exception:
+                pass
+        if not video_id and "watch?v=" in url.lower():
+            try:
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(url)
+                video_id = (parse_qs(parsed.query).get("v") or [None])[0]
+            except Exception:
+                pass
+        if video_id:
+            return f"youtube://www.youtube.com/watch?v={video_id}"
+        return None
     
     async def play_url(
         self,
@@ -451,14 +477,19 @@ class AppleTVService:
 
                 if is_deep_link and has_apps:
                     # Try to launch as deep link via Apps interface (requires Companion/MRP)
+                    # For YouTube use youtube:// scheme so the YouTube app plays natively (no conversion/ffmpeg)
                     try:
                         apps = atv_instance.apps
                         if apps:
-                            logger.info(f"Launching deep link: {url}")
-                            await apps.launch_app(url)
+                            launch_url = self._youtube_deep_link_url(url) or url
+                            if launch_url != url:
+                                logger.info(f"Launching YouTube deep link (no conversion): {launch_url}")
+                            else:
+                                logger.info(f"Launching deep link: {launch_url}")
+                            await apps.launch_app(launch_url)
                             return {
                                 "status": "SUCCESS",
-                                "message": f"Launched deep link {url} on {atv.name}",
+                                "message": f"Открыто на {atv.name}" + (" (приложение YouTube)" if "youtube://" in launch_url else ""),
                                 "method": "deep_link",
                             }
                     except Exception as e:
@@ -490,10 +521,11 @@ class AppleTVService:
                     elif is_deep_link and not is_direct_media:
                         self._last_merge_used = False
                         # For 720p/1080p try server-side merge (video+audio) so we get quality with sound
-                        if quality in ("720p", "1080p"):
+                        # For "auto" also try merge to avoid DASH-only streams that AirPlay RTSP can't handle
+                        if quality in ("720p", "1080p", "auto"):
                             try:
                                 from app.stream_merge import get_video_audio_urls, create_merge_session
-                                merge_info = await get_video_audio_urls(url, quality)
+                                merge_info = await get_video_audio_urls(url, quality if quality != "auto" else "720p")
                                 if merge_info:
                                     stream_id = create_merge_session(
                                         merge_info["video_url"],
@@ -502,7 +534,7 @@ class AppleTVService:
                                     )
                                     base = (os.environ.get("STREAM_BASE_URL") or "http://localhost:8000").rstrip("/")
                                     play_url_final = f"{base}/api/appletv/stream/{stream_id}"
-                                    resolved_quality = f"{merge_info.get('height') or quality}p" if merge_info.get("height") else quality
+                                    resolved_quality = f"{merge_info.get('height') or (quality if quality != 'auto' else '720')}p" if merge_info.get("height") else (quality if quality != "auto" else "720p")
                                     logger.info(f"Using server merge stream (quality: {resolved_quality})")
                                     # Mark so frontend/log can show "склейка на сервере"
                                     self._last_merge_used = True
@@ -511,7 +543,7 @@ class AppleTVService:
                                 self._last_merge_used = False
                         else:
                             self._last_merge_used = False
-                        # Fallback: single URL (no merge)
+                        # Fallback: single URL (no merge) - prefer combined format for AirPlay compatibility
                         if play_url_final == url:
                             resolved = await self._resolve_stream_url(url, quality)
                             if resolved:
