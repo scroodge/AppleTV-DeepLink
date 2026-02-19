@@ -1,4 +1,13 @@
-"""Apple TV service using pyatv."""
+"""Apple TV service using pyatv.
+
+Deep link technology (borrowed from VidHub / Infuse):
+- x-callback-url: scheme://x-callback-url/action?url=ENCODED_URL — standard for
+  inter-app playback on iOS/tvOS. The target app receives the URL and plays it
+  with AVPlayer (native HLS/.m3u8 support, no server-side conversion).
+- VidHub: open-vidhub://x-callback-url/open?url=... — supports HLS natively.
+- Infuse: infuse://x-callback-url/play?url=... — same idea, any HTTP(S) URL.
+When no such app is installed, we fall back to AirPlay with server-side HLS→MP4 remux.
+"""
 import asyncio
 import logging
 import os
@@ -356,6 +365,32 @@ class AppleTVService:
         if video_id:
             return f"youtube://www.youtube.com/watch?v={video_id}"
         return None
+
+    @staticmethod
+    def _x_callback_play_url(scheme: str, path: str, url: str) -> Optional[str]:
+        """Build x-callback-url style play/open URL (VidHub/Infuse technology)."""
+        if not url or not scheme or not path:
+            return None
+        try:
+            from urllib.parse import quote
+            encoded = quote(url, safe="")
+            return f"{scheme}://x-callback-url/{path}?url={encoded}"
+        except Exception:
+            return None
+
+    @staticmethod
+    def _vidhub_deep_link_url(url: str) -> Optional[str]:
+        """VidHub: open-vidhub://x-callback-url/open?url=... — native HLS in app (AVPlayer)."""
+        if not url or ".m3u8" not in url.lower():
+            return None
+        return AppleTVService._x_callback_play_url("open-vidhub", "open", url)
+
+    @staticmethod
+    def _infuse_play_url(url: str) -> Optional[str]:
+        """Infuse: infuse://x-callback-url/play?url=... — plays any HTTP(S) URL including HLS."""
+        if not url or not url.strip().lower().startswith(("http://", "https://")):
+            return None
+        return AppleTVService._x_callback_play_url("infuse", "play", url)
     
     async def play_url(
         self,
@@ -473,28 +508,57 @@ class AppleTVService:
                 # Check if URL is a deep link (app link) or media URL
                 is_deep_link = self._is_deep_link(url)
                 is_direct_media = self._is_direct_media_url(url)
+                is_hls = self._is_hls_url(url)
                 has_apps = getattr(atv_instance, "apps", None) is not None
 
-                # Don't try launch_app for direct media (.m3u8, .mp4): use AirPlay (and HLS→MP4 remux for .m3u8)
-                if is_deep_link and has_apps and not is_direct_media:
-                    # Try to launch as deep link via Apps interface (requires Companion/MRP)
-                    # For YouTube use youtube:// scheme so the YouTube app plays natively (no conversion/ffmpeg)
-                    try:
-                        apps = atv_instance.apps
-                        if apps:
-                            launch_url = self._youtube_deep_link_url(url) or url
-                            if launch_url != url:
-                                logger.info(f"Launching YouTube deep link (no conversion): {launch_url}")
-                            else:
-                                logger.info(f"Launching deep link: {launch_url}")
-                            await apps.launch_app(launch_url)
-                            return {
-                                "status": "SUCCESS",
-                                "message": f"Открыто на {atv.name}" + (" (приложение YouTube)" if "youtube://" in launch_url else ""),
-                                "method": "deep_link",
-                            }
-                    except Exception as e:
-                        logger.warning(f"Failed to launch as deep link: {e}, falling back to AirPlay")
+                # Try deep links: YouTube → youtube://, HLS → VidHub then Infuse (x-callback-url), other apps
+                app_deep_link_failed = False
+                if has_apps and (is_deep_link or is_hls or is_direct_media):
+                    apps = atv_instance.apps
+                    if apps:
+                        launch_url = None
+                        app_name = None
+                        # YouTube: youtube:// scheme
+                        if "youtube.com" in url.lower() or "youtu.be" in url.lower():
+                            launch_url = self._youtube_deep_link_url(url)
+                            app_name = "YouTube"
+                        # HLS / direct HTTP(S): try VidHub then Infuse (same tech: x-callback-url + AVPlayer)
+                        elif is_hls or is_direct_media:
+                            for candidate_url, name in [
+                                (self._vidhub_deep_link_url(url), "VidHub"),
+                                (self._infuse_play_url(url), "Infuse"),
+                            ]:
+                                if not candidate_url:
+                                    continue
+                                try:
+                                    logger.info(f"Launching deep link ({name}): {candidate_url[:80]}...")
+                                    await apps.launch_app(candidate_url)
+                                    return {
+                                        "status": "SUCCESS",
+                                        "message": f"Открыто на {atv.name} (приложение {name})",
+                                        "method": "deep_link",
+                                    }
+                                except Exception as e:
+                                    logger.warning(f"Deep link {name} failed: {e}")
+                            app_deep_link_failed = True
+                            if is_hls:
+                                logger.info("VidHub/Infuse not available for HLS, will use AirPlay with remux")
+                        # Other deep links: pass URL as-is
+                        elif is_deep_link:
+                            launch_url = url
+                            try:
+                                logger.info(f"Launching deep link (app): {launch_url[:80]}...")
+                                await apps.launch_app(launch_url)
+                                return {
+                                    "status": "SUCCESS",
+                                    "message": f"Открыто на {atv.name}",
+                                    "method": "deep_link",
+                                }
+                            except Exception as e:
+                                logger.warning(f"Failed to launch deep link: {e}")
+                    else:
+                        app_deep_link_failed = is_hls
+                vidhub_failed = app_deep_link_failed
                 
                 # AirPlay: first try "Home Assistant way" (no conversion); on error retry with our remux/merge
                 stream = atv_instance.stream
@@ -509,8 +573,13 @@ class AppleTVService:
                     resolved_quality = None
                     base = (os.environ.get("STREAM_BASE_URL") or "http://localhost:8000").rstrip("/")
                     # Step 1: build URL the simple way (like HA — pass URL or single resolved stream)
-                    if is_direct_media:
+                    # For HLS: if VidHub failed, skip raw playback and go straight to remux
+                    skip_raw_hls = vidhub_failed and is_direct_media and self._is_hls_url(url)
+                    if is_direct_media and not skip_raw_hls:
                         play_url_final = url
+                    elif skip_raw_hls:
+                        # Skip raw HLS playback, go straight to remux
+                        play_url_final = None
                     else:
                         # Page link (YouTube etc.): resolve to single stream URL
                         resolved = await self._resolve_stream_url(url, quality)
@@ -522,15 +591,27 @@ class AppleTVService:
                             }
                         play_url_final = resolved["url"]
                         resolved_quality = resolved.get("quality_label")
-                    logger.info("Playing URL via AirPlay (HA-style): %s", play_url_final[:80] + ("..." if len(play_url_final) > 80 else ""))
-                    try:
-                        await stream.play_url(play_url_final)
-                    except Exception as play_err:
+                    
+                    # For HLS with VidHub failed, skip raw playback attempt
+                    if skip_raw_hls:
+                        play_err = Exception("VidHub not available, skipping raw HLS playback")
+                    else:
+                        logger.info("Playing URL via AirPlay (HA-style): %s", play_url_final[:80] + ("..." if len(play_url_final) > 80 else ""))
+                        play_err = None
+                        try:
+                            await stream.play_url(play_url_final)
+                        except Exception as e:
+                            play_err = e
+                    
+                    if play_err:
                         err_str = str(play_err).lower()
+                        err_msg = str(play_err)
+                        logger.debug(f"AirPlay error: {err_msg}, is_direct_media={is_direct_media}, is_hls={self._is_hls_url(url) if is_direct_media else False}, vidhub_failed={vidhub_failed}")
                         # Retry with conversion if Apple TV rejected (RTSP 400 / HTTP 500 for HLS / format)
                         # HTTP 500 can mean Apple TV accepted URL but can't load the stream (e.g. HLS not supported)
-                        should_retry = ("400" in err_str or "rtsp" in err_str or "bad request" in err_str or 
+                        should_retry = skip_raw_hls or ("400" in err_str or "rtsp" in err_str or "bad request" in err_str or 
                                        (is_direct_media and self._is_hls_url(url) and ("500" in err_str or "internal server error" in err_str)))
+                        logger.debug(f"should_retry={should_retry}, skip_raw_hls={skip_raw_hls}, checking: 400={('400' in err_str)}, rtsp={('rtsp' in err_str)}, bad_request={('bad request' in err_str)}, hls_500={is_direct_media and self._is_hls_url(url) and ('500' in err_str or 'internal server error' in err_str)}")
                         if should_retry:
                             if is_direct_media and self._is_hls_url(url):
                                 try:

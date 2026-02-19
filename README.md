@@ -116,7 +116,7 @@ Apple TV 1st generation (2007) does not support AirPlay or modern protocols. The
    - **Deep Links**: Supported for Apple TV apps (Netflix, Disney+, HBO Max, Apple TV+, YouTube, etc.)
      - Example: `https://www.netflix.com/title/80234304`
      - Example: `https://tv.apple.com/show/severance/...`
-   - **Media URLs**: Direct media files (`.mp4`, `.m3u8`, etc.) will be played via AirPlay. Ссылки на **HLS** (`.m3u8`) сервер принимает и отдаёт как **MP4** (remux через ffmpeg), чтобы Apple TV получал один поток — так же, как для YouTube при 720p/1080p. Нужен корректный `STREAM_BASE_URL`, чтобы Apple TV мог запросить поток.
+   - **Media URLs**: Direct media files (`.mp4`, `.m3u8`, etc.) will be played via AirPlay. Для **HLS** (`.m3u8`) и других прямых ссылок используется технология **x-callback-url** (как в VidHub/Infuse): если на Apple TV установлено приложение **VidHub** или **Infuse**, ссылка передаётся в приложение и воспроизводится нативно (AVPlayer, без конвертации). Если таких приложений нет — для HLS выполняется remux в MP4 на сервере (нужен корректный `STREAM_BASE_URL`).
 2. Click "Отправить на Apple TV" (Send to Apple TV)
 3. The URL will be launched/played on your default Apple TV device
    - Deep links are launched via the Apps interface
