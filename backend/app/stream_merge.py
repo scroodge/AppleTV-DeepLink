@@ -321,6 +321,26 @@ def _register_consumer(stream_id: str):
     return q, unregister
 
 
+async def wait_hls_prewarm(stream_id: str, timeout: float = 15.0, min_bytes: int = 65536) -> bool:
+    """Wait until HLS session buffer has at least min_bytes so Apple TV gets immediate response. Returns True if ready."""
+    import time
+    session = get_merge_session(stream_id)
+    if not session or "buffer_list" not in session or "buffer_lock" not in session:
+        return False
+    buffer_list = session["buffer_list"]
+    buffer_lock = session["buffer_lock"]
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with buffer_lock:
+            total = sum(len(c) for c in buffer_list)
+        if total >= min_bytes:
+            logger.info("[stream %s] Pre-warm ready (%s bytes)", stream_id, total)
+            return True
+        await asyncio.sleep(0.15)
+    logger.warning("[stream %s] Pre-warm timeout (got %s bytes)", stream_id, sum(len(c) for c in buffer_list))
+    return False
+
+
 async def wait_first_chunk_merge(stream_id: str, timeout: float = 25.0, min_buffer_bytes: int = 262144):
     """Register a consumer, wait for initial data (at least min_buffer_bytes or first chunk). Returns (initial_bytes, queue, unregister_cb) or (None, None, None)."""
     import time

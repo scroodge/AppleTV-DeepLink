@@ -531,11 +531,13 @@ class AppleTVService:
                         if "400" in err_str or "rtsp" in err_str or "bad request" in err_str:
                             if is_direct_media and self._is_hls_url(url):
                                 try:
-                                    from app.stream_merge import create_hls_session
+                                    from app.stream_merge import create_hls_session, wait_hls_prewarm
                                     stream_id = create_hls_session(url)
                                     play_url_final = f"{base}/api/appletv/stream/{stream_id}"
                                     self._last_merge_used = True
                                     logger.info("HLS failed, retrying with HLS→MP4 remux: %s", stream_id)
+                                    # Wait for pre-warm (64KB) so Apple TV gets data immediately and RTSP SETUP succeeds
+                                    await wait_hls_prewarm(stream_id, timeout=15.0, min_bytes=65536)
                                     await stream.play_url(play_url_final)
                                 except Exception as e2:
                                     err_detail = str(e2).strip() or type(e2).__name__
