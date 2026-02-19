@@ -181,13 +181,13 @@ docker compose logs -f backend
 **1080p в Docker:** Порт бэкенда на хосте — **8100** (в контейнере 8000), чтобы не конфликтовать с другими сервисами (например Portainer на 8000). Проверка с телефона в той же Wi‑Fi: откройте `http://<IP_хоста>:8100/health` — должен вернуться `{"status":"ok"}`. Если не открывается — проверьте фаервол (разрешить входящие на порт 8100). Один и тот же поток могут запрашивать несколько клиентов (браузер и Apple TV): каждый получит свою копию потока.
 
 **Ошибка «RTSP/1.0 method SETUP failed with code 400» при воспроизведении HLS или YouTube по AirPlay (в Docker):**  
-В Docker timing server в pyatv привязывается к IP контейнера; Apple TV не может к нему подключиться и возвращает 400. **На Linux-сервере** используйте режим хоста для бэкенда:
+В Docker timing server в pyatv привязывается к IP контейнера; Apple TV не может к нему подключиться и возвращает 400. **На Linux-сервере** запускайте только `docker-compose.host.yml` (режим хоста для бэкенда):
 ```bash
 export STREAM_BASE_URL=http://192.168.0.149:8100
 export PUBLIC_API_URL=http://192.168.0.149:8100
-docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
+docker compose -f docker-compose.host.yml up -d --build
 ```
-Бэкенд будет слушать порт 8100 на хосте; HLS и play_url начнут работать. Подробности — в `docker-compose.host.yml`.
+Бэкенд будет слушать порт 8100 на хосте; HLS и play_url начнут работать.
 
 ### Удаление и изменение устройств
 

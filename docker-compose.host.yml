@@ -1,25 +1,36 @@
-# Для Linux-сервера: play_url (HLS, YouTube) даёт RTSP SETUP 400 в обычном Docker,
-# т.к. timing server в pyatv биндится на IP контейнера, Apple TV до него не достучится.
-# Решение: backend в network_mode: host — сервер слушает на IP хоста, SETUP проходит.
+# Для Linux-сервера: play_url (HLS, YouTube) даёт RTSP SETUP 400 в обычном Docker.
+# Решение: backend в network_mode: host. Запуск ТОЛЬКО этим файлом (без слияния с docker-compose.yml).
 #
-# Использование на сервере (ai, Linux):
+# На сервере (ai):
 #   export STREAM_BASE_URL=http://192.168.0.149:8100
-#   export PUBLIC_API_URL=http://192.168.0.149:8100   # для фронта (браузер дергает API по этому URL)
-#   docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
-# Бэкенд: хост:8100. Frontend: хост:3000, в настройках фронта PUBLIC_API_URL должен быть http://IP:8100.
+#   export PUBLIC_API_URL=http://192.168.0.149:8100
+#   docker compose -f docker-compose.host.yml up -d --build
+# Бэкенд: хост:8100. Frontend: хост:3000.
 
 services:
   backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: deep-link-backend
     network_mode: host
-    # Убираем networks и ports — они несовместимы с network_mode: host
-    networks: {}
-    ports: []
+    volumes:
+      - ./backend/data:/app/data
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100"]
     environment:
       - DATABASE_URL=sqlite:////app/data/appletv.db
       - STREAM_BASE_URL=${STREAM_BASE_URL:-http://localhost:8100}
+    restart: unless-stopped
+
   frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: deep-link-frontend
+    ports:
+      - "3000:3000"
     environment:
       - PUBLIC_API_URL=${PUBLIC_API_URL:-http://localhost:8100}
       - PORT=3000
       - HOST=0.0.0.0
+    restart: unless-stopped
