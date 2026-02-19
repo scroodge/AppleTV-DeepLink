@@ -2,9 +2,9 @@
 import { browser } from '$app/environment';
 import type { ApiResponse, DeviceInfo, PairedDevice, DefaultDevice, PairingStatus, ActivityEntry } from './types';
 
-const API_URL = (typeof window !== 'undefined' 
-	? (import.meta.env.PUBLIC_API_URL || 'http://localhost:8000')
-	: 'http://localhost:8000');
+const API_URL = (typeof window !== 'undefined'
+	? (import.meta.env.PUBLIC_API_URL || 'http://localhost:8100')
+	: 'http://localhost:8100');
 
 async function request<T>(
 	endpoint: string,
