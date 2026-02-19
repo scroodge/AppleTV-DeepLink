@@ -620,8 +620,12 @@ class AppleTVService:
                                     play_url_final = f"{base}/api/appletv/stream/{stream_id}"
                                     self._last_merge_used = True
                                     logger.info("HLS failed, retrying with HLS→MP4 remux: %s", stream_id)
+                                    logger.info("Remux stream URL for Apple TV: %s", play_url_final)
                                     # Wait for pre-warm (64KB) so Apple TV gets data immediately and RTSP SETUP succeeds
-                                    await wait_hls_prewarm(stream_id, timeout=15.0, min_bytes=65536)
+                                    prewarm_ok = await wait_hls_prewarm(stream_id, timeout=15.0, min_bytes=65536)
+                                    if not prewarm_ok:
+                                        logger.warning("HLS pre-warm incomplete, but proceeding anyway")
+                                    logger.info("Sending remux URL to Apple TV via AirPlay...")
                                     await stream.play_url(play_url_final)
                                 except Exception as e2:
                                     err_detail = str(e2).strip() or type(e2).__name__

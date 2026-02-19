@@ -248,7 +248,8 @@ def _run_ffmpeg_merge(stream_id: str):
 
 
 def _run_ffmpeg_hls_to_mp4(stream_id: str):
-    """Run ffmpeg HLS→MP4 (remux, no re-encode) and yield chunks (blocking generator)."""
+    """Run ffmpeg HLS→MP4 (remux, no re-encode) and yield chunks (blocking generator).
+    Optimized for AirPlay compatibility: fragmented MP4 with AAC bitstream filter."""
     session = get_merge_session(stream_id)
     if not session or "hls_url" not in session:
         return
@@ -257,10 +258,12 @@ def _run_ffmpeg_hls_to_mp4(stream_id: str):
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-probesize", "32K", "-analyzeduration", "500000",
+        "-protocol_whitelist", "file,http,https,tcp,tls",
         "-allowed_extensions", "ALL",
         "-i", hls_url,
         "-c", "copy",
-        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        "-bsf:a", "aac_adtstoasc",  # Convert AAC ADTS to MP4-compatible format (HLS often uses ADTS)
+        "-movflags", "frag_keyframe+empty_moov+default_base_moof",  # faststart not needed for streaming
         "-f", "mp4", "pipe:1",
     ]
     try:

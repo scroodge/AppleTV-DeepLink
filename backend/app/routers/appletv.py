@@ -152,12 +152,20 @@ async def stream_merged(stream_id: str, request: Request):
         return StreamingResponse(
             stream_merged_mp4_async(stream_id, first_chunk=first_chunk, chunk_queue=q, unregister_cb=unregister),
             media_type="video/mp4",
-            headers={"Cache-Control": "no-store"},
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate",
+                "Accept-Ranges": "bytes",
+                "Content-Type": "video/mp4",
+            },
         )
     return StreamingResponse(
         stream_merged_mp4_async(stream_id),
         media_type="video/mp4",
-        headers={"Cache-Control": "no-store"},
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Accept-Ranges": "bytes",
+            "Content-Type": "video/mp4",
+        },
     )
 
 
