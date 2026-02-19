@@ -9,20 +9,21 @@
 	export let onDelete: ((deviceId: string) => void) | undefined = undefined;
 	export let onUpdate: ((deviceId: string, data: { name?: string; address?: string }) => void) | undefined = undefined;
 
-	// Track selected protocol for each device
-	let selectedProtocols: Record<string, string> = {};
 	let editingDeviceId: string | null = null;
 	let editName = '';
 	let editAddress = '';
 
 	function isPaired(deviceId: string): boolean {
 		const device = pairedDevices.find((d) => d.device_id === deviceId);
-		// Device is considered paired only if it exists AND has actual credentials
 		return device ? (device.is_paired === true) : false;
 	}
-	
+
+	function getPairedProtocols(deviceId: string): string[] {
+		const device = pairedDevices.find((d) => d.device_id === deviceId);
+		return device?.paired_protocols ?? [];
+	}
+
 	function isAdded(deviceId: string): boolean {
-		// Check if device exists in database (even without credentials)
 		return pairedDevices.some((d) => d.device_id === deviceId);
 	}
 
@@ -30,21 +31,14 @@
 		return device.protocols || [];
 	}
 
-	function getSelectedProtocol(deviceId: string): string {
-		return selectedProtocols[deviceId] || '';
+	function isProtocolPaired(deviceId: string, protocol: string): boolean {
+		return getPairedProtocols(deviceId).includes(protocol.toLowerCase());
 	}
 
-	function setSelectedProtocol(deviceId: string, protocol: string) {
-		selectedProtocols[deviceId] = protocol;
-	}
-
-	function handlePairClick(device: DeviceInfo) {
-		const selected = getSelectedProtocol(device.device_id);
+	function allProtocolsPaired(device: DeviceInfo): boolean {
 		const protocols = getProtocols(device);
-		const protocol = selected || protocols[0];
-		if (protocol) {
-			onPair(device, protocol);
-		}
+		const paired = getPairedProtocols(device.device_id);
+		return protocols.length > 0 && protocols.every((p) => paired.includes(p.toLowerCase()));
 	}
 
 	function startEdit(device: DeviceInfo) {
@@ -128,9 +122,30 @@
 							</div>
 						{/if}
 					</div>
-					<div class="flex gap-2 items-center">
-						{#if isPaired(device.device_id)}
-							<span class="text-green-600 text-sm">✓ Сопряжено</span>
+					<div class="flex flex-col gap-2 items-end">
+						{#if getProtocols(device).length > 0}
+							<div class="flex flex-wrap gap-2 items-center justify-end">
+								{#each getProtocols(device) as protocol}
+									<span class="text-xs text-gray-600">{protocol}:</span>
+									{#if isProtocolPaired(device.device_id, protocol)}
+										<span class="text-green-600 text-xs">✓ Сопряжён</span>
+									{:else}
+										<button
+											class="text-xs px-2 py-1 bg-green-500 text-white rounded hover:bg-green-600"
+											on:click={() => onPair(device, protocol)}
+										>
+											Сопряжение
+										</button>
+									{/if}
+								{/each}
+							</div>
+							{#if allProtocolsPaired(device)}
+								<span class="text-green-600 text-sm">✓ Все протоколы сопряжены</span>
+							{/if}
+						{:else}
+							<span class="text-xs text-gray-500">Протоколы не обнаружены</span>
+						{/if}
+						{#if isAdded(device.device_id)}
 							{#if defaultDeviceId === device.device_id}
 								<span class="text-blue-600 text-sm">(По умолчанию)</span>
 							{:else}
@@ -140,59 +155,6 @@
 								>
 									Установить по умолчанию
 								</button>
-							{/if}
-						{:else if isAdded(device.device_id)}
-							<div class="flex flex-col gap-2 items-end">
-								<span class="text-orange-600 text-sm">⚠ Требуется сопряжение</span>
-								{#if getProtocols(device).length > 0}
-									<div class="flex gap-2 items-center">
-										<select
-											class="text-xs border rounded px-2 py-1"
-											value={getSelectedProtocol(device.device_id)}
-											on:change={(e) => {
-												setSelectedProtocol(device.device_id, e.currentTarget.value);
-											}}
-										>
-											<option value="">Выбрать протокол</option>
-											{#each getProtocols(device) as protocol}
-												<option value={protocol}>{protocol}</option>
-											{/each}
-										</select>
-										<button
-											class="text-xs px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed"
-											on:click={() => handlePairClick(device)}
-											disabled={getProtocols(device).length === 0}
-										>
-											Сопряжение
-										</button>
-									</div>
-								{:else}
-									<span class="text-xs text-gray-500">Протоколы не обнаружены</span>
-								{/if}
-							</div>
-						{:else}
-							{#if getProtocols(device).length > 0}
-								<div class="flex gap-2 items-center">
-									<select
-										class="text-xs border rounded px-2 py-1"
-										value={getSelectedProtocol(device.device_id)}
-										on:change={(e) => {
-											setSelectedProtocol(device.device_id, e.currentTarget.value);
-										}}
-									>
-										<option value="">Выбрать протокол</option>
-										{#each getProtocols(device) as protocol}
-											<option value={protocol}>{protocol}</option>
-										{/each}
-									</select>
-									<button
-										class="text-xs px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed"
-										on:click={() => handlePairClick(device)}
-										disabled={getProtocols(device).length === 0}
-									>
-										Сопряжение
-									</button>
-								</div>
 							{/if}
 						{/if}
 					</div>

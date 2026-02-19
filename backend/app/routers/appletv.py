@@ -104,10 +104,18 @@ async def get_paired_devices(db: Session = Depends(get_db)):
         for device in devices:
             import json
             protocols = json.loads(device.protocols) if device.protocols else []
-            
-            # Check if device is actually paired (has non-empty credentials)
-            credentials = json.loads(device.credentials) if device.credentials else {}
-            is_paired = bool(credentials and credentials != {})
+            raw_creds = json.loads(device.credentials) if device.credentials else {}
+            # raw_creds is { identifier: { "AirPlay": "...", "Companion": "..." } }
+            paired_protocols = []
+            for creds_dict in (raw_creds.values() if isinstance(raw_creds, dict) else []):
+                if isinstance(creds_dict, dict):
+                    for proto in ("AirPlay", "Companion", "MRP"):
+                        if creds_dict.get(proto):
+                            p = proto.lower()
+                            if p not in paired_protocols:
+                                paired_protocols.append(p)
+                    break
+            is_paired = bool(raw_creds and raw_creds != {})
             
             result.append({
                 "id": device.id,
@@ -115,6 +123,7 @@ async def get_paired_devices(db: Session = Depends(get_db)):
                 "name": device.name,
                 "address": device.address,
                 "protocols": protocols,
+                "paired_protocols": paired_protocols,
                 "is_paired": is_paired,
                 "last_seen": device.last_seen.isoformat() if device.last_seen else None,
                 "created_at": device.created_at.isoformat() if device.created_at else None,

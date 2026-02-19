@@ -23,9 +23,15 @@ class DatabaseStorage:
                 self._credentials = {}
     
     def save(self, identifier: str, credentials: Dict[str, Any]) -> None:
-        """Save credentials for a device."""
-        self._credentials[identifier] = credentials
-        logger.debug(f"Saved credentials for {identifier}")
+        """Save credentials for a device. Merges with existing so multiple protocols can be paired."""
+        existing = self._credentials.get(identifier)
+        if isinstance(credentials, dict) and isinstance(existing, dict):
+            merged = {**existing, **credentials}
+            self._credentials[identifier] = merged
+            logger.debug(f"Merged and saved credentials for {identifier} (keys: {list(merged.keys())})")
+        else:
+            self._credentials[identifier] = credentials
+            logger.debug(f"Saved credentials for {identifier}")
     
     def load(self, identifier: str) -> Optional[Dict[str, Any]]:
         """Load credentials for a device."""

@@ -15,6 +15,8 @@ export interface PairedDevice {
 	name: string;
 	address: string;
 	protocols: string[];
+	/** Protocols that have been paired (e.g. ["airplay", "companion"]) */
+	paired_protocols?: string[];
 	is_paired?: boolean; // True if device has actual credentials (was paired)
 	last_seen?: string;
 	created_at: string;
