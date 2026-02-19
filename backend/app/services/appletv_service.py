@@ -527,8 +527,11 @@ class AppleTVService:
                         await stream.play_url(play_url_final)
                     except Exception as play_err:
                         err_str = str(play_err).lower()
-                        # Retry with conversion if Apple TV rejected (RTSP 400 / format)
-                        if "400" in err_str or "rtsp" in err_str or "bad request" in err_str:
+                        # Retry with conversion if Apple TV rejected (RTSP 400 / HTTP 500 for HLS / format)
+                        # HTTP 500 can mean Apple TV accepted URL but can't load the stream (e.g. HLS not supported)
+                        should_retry = ("400" in err_str or "rtsp" in err_str or "bad request" in err_str or 
+                                       (is_direct_media and self._is_hls_url(url) and ("500" in err_str or "internal server error" in err_str)))
+                        if should_retry:
                             if is_direct_media and self._is_hls_url(url):
                                 try:
                                     from app.stream_merge import create_hls_session, wait_hls_prewarm
