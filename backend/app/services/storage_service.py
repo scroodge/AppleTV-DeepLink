@@ -23,10 +23,13 @@ class DatabaseStorage:
                 self._credentials = {}
     
     def save(self, identifier: str, credentials: Dict[str, Any]) -> None:
-        """Save credentials for a device. Merges with existing so multiple protocols can be paired."""
+        """Save credentials for a device. Merges with existing so we keep both AirPlay and Companion."""
         existing = self._credentials.get(identifier)
-        if isinstance(credentials, dict) and isinstance(existing, dict):
-            merged = {**existing, **credentials}
+        # Legacy: existing may be a single string (one protocol); treat as generic 'credentials'
+        if isinstance(existing, str):
+            existing = {"credentials": existing}
+        if isinstance(credentials, dict):
+            merged = {**(existing or {}), **credentials}
             self._credentials[identifier] = merged
             logger.debug(f"Merged and saved credentials for {identifier} (keys: {list(merged.keys())})")
         else:

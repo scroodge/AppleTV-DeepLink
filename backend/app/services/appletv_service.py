@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import os
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple, Union
 from pyatv import scan, pair, connect
 from pyatv.const import Protocol, PairingRequirement
 from pyatv.interface import AppleTV, PairingHandler
@@ -23,7 +23,7 @@ class AppleTVService:
     """Service for Apple TV operations."""
     
     def __init__(self):
-        self._pairing_sessions: Dict[str, PairingHandler] = {}
+        self._pairing_sessions: Dict[str, Union[PairingHandler, Tuple[PairingHandler, str]]] = {}
     
     async def scan_devices(self, timeout: int = 5) -> List[Dict[str, Any]]:
         """Scan for Apple TV devices on the local network."""
@@ -105,42 +105,45 @@ class AppleTVService:
             if not service:
                 raise ValueError(f"Protocol {protocol} not supported by device")
             
+            # Map protocol to storage key (AirPlay, Companion, MRP) so we store two separate credentials
+            protocol_storage_key = {"airplay": "AirPlay", "companion": "Companion", "mrp": "MRP"}.get(protocol, "AirPlay")
+            
             # Create storage from existing credentials if available
             db_storage = DatabaseStorage(credentials_json)
             device_identifier = str(atv.identifier)
             
-            # Create a simple storage adapter for pyatv
-            # pyatv's pair() function accepts a storage parameter that should have save/load/get_settings
+            # Storage adapter: pyatv may pass a raw string for one protocol; we always store dict by protocol key
             class StorageAdapter:
-                def __init__(self, db_storage: DatabaseStorage, identifier: str):
+                def __init__(self, db_storage: DatabaseStorage, identifier: str, protocol_key: str):
                     self._db_storage = db_storage
                     self._identifier = identifier
+                    self._protocol_key = protocol_key
                 
-                def save(self, credentials: Dict[str, Any]) -> None:
-                    """Save credentials for the device."""
+                def save(self, credentials: Any) -> None:
+                    """Save credentials. If pyatv passes a string, store as { protocol_key: credentials }."""
+                    if isinstance(credentials, str):
+                        credentials = {self._protocol_key: credentials}
+                    elif not isinstance(credentials, dict):
+                        credentials = {self._protocol_key: credentials}
                     self._db_storage.save(self._identifier, credentials)
                 
                 def load(self) -> Optional[Dict[str, Any]]:
-                    """Load credentials for the device."""
                     return self._db_storage.load(self._identifier)
                 
                 def get_settings(self, identifier: str) -> Optional[Dict[str, Any]]:
-                    """Get settings for a device identifier."""
                     return self._db_storage.load(identifier)
             
-            storage_adapter = StorageAdapter(db_storage, device_identifier)
+            storage_adapter = StorageAdapter(db_storage, device_identifier, protocol_storage_key)
             
             # Start pairing - pyatv pair() signature may vary by version
             loop = asyncio.get_event_loop()
-            # Try with storage parameter first
             try:
                 pairing = await pair(atv, target_protocol, loop=loop, storage=storage_adapter)
             except TypeError:
-                # Fallback if storage parameter not supported
                 pairing = await pair(atv, target_protocol, loop=loop)
             
-            # Store pairing session
-            self._pairing_sessions[device_id] = pairing
+            # Store (pairing, protocol_key) so submit_pin can save under the right key
+            self._pairing_sessions[device_id] = (pairing, protocol_storage_key)
             
             # Start the pairing process (required so Apple TV shows PIN)
             await pairing.begin()
@@ -179,35 +182,29 @@ class AppleTVService:
         try:
             logger.info(f"Submitting PIN for {device_id}")
             
-            pairing = self._pairing_sessions.get(device_id)
-            if not pairing:
+            session = self._pairing_sessions.get(device_id)
+            if not session:
                 raise ValueError("No active pairing session found")
+            pairing = session[0] if isinstance(session, tuple) else session
+            protocol_storage_key = session[1] if isinstance(session, tuple) and len(session) > 1 else "AirPlay"
             
             pairing.pin(pin)
             await pairing.finish()
             
-            # Get updated credentials from storage
             db_storage = DatabaseStorage(credentials_json)
-            # The pairing process should have saved credentials via the adapter
-            # Get the device identifier to retrieve credentials
             loop = asyncio.get_event_loop()
             atvs = await scan(loop=loop, hosts=[str(address)])
-            # scan() returns a list
             if atvs:
                 device_identifier = str(atvs[0].identifier)
-                # Ensure credentials are saved
-                # If storage adapter was used, credentials should already be saved
-                # Otherwise, we need to get them from the pairing result
+                # Save under protocol key so we have two separate codes for AirPlay and Companion
                 try:
-                    # Try to get credentials from pairing
                     if hasattr(pairing, 'service') and hasattr(pairing.service, 'credentials'):
                         creds = pairing.service.credentials
                         if creds:
-                            db_storage.save(device_identifier, creds)
+                            db_storage.save(device_identifier, {protocol_storage_key: creds})
                 except Exception:
-                    pass  # Credentials may already be saved via adapter
+                    pass
                 
-                # Clean up pairing session
                 del self._pairing_sessions[device_id]
                 
                 return {
