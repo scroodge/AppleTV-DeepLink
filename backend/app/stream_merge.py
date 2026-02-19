@@ -144,14 +144,53 @@ def create_merge_session(video_url: str, audio_url: str, height: Optional[int] =
     return stream_id
 
 
+def _producer_hls(stream_id: str, broadcast_queue: queue.Queue) -> None:
+    """Run HLS→MP4 ffmpeg and put chunks into broadcast queue. Call from background thread."""
+    first_chunk = True
+    chunk_count = 0
+    try:
+        for chunk in _run_ffmpeg_hls_to_mp4(stream_id):
+            if chunk:
+                chunk_count += 1
+                if first_chunk:
+                    logger.info("[stream %s] HLS→MP4: first data ready (pre-warm)", stream_id)
+                    first_chunk = False
+                broadcast_queue.put(chunk)
+    except Exception as e:
+        logger.warning("[stream %s] HLS producer error: %s", stream_id, e)
+    finally:
+        broadcast_queue.put(None)
+        if chunk_count == 0:
+            logger.warning("[stream %s] HLS→MP4: no data (check ffmpeg)", stream_id)
+        else:
+            logger.info("[stream %s] HLS→MP4 finished (%s chunks)", stream_id, chunk_count)
+
+
 def create_hls_session(hls_url: str) -> str:
-    """Store an HLS URL for remux to MP4; return stream_id."""
-    stream_id = str(uuid.uuid4())[:12]
+    """Store HLS URL, start ffmpeg in background (pre-warm) so Apple TV gets data immediately."""
     import time
+    stream_id = str(uuid.uuid4())[:12]
+    broadcast_queue = queue.Queue(maxsize=_PREWARM_QUEUE_MAXSIZE)
+    consumers: list = []
+    buffer_list: list = []
+    buffer_lock = threading.Lock()
     _sessions[stream_id] = {
         "hls_url": hls_url,
         "created_at": time.time(),
+        "broadcast_queue": broadcast_queue,
+        "consumers": consumers,
+        "buffer_list": buffer_list,
+        "buffer_lock": buffer_lock,
     }
+    t = threading.Thread(target=_producer_hls, args=(stream_id, broadcast_queue), daemon=True)
+    t.start()
+    b = threading.Thread(
+        target=_broadcaster_merge,
+        args=(stream_id, broadcast_queue, consumers, buffer_list, buffer_lock),
+        daemon=True,
+    )
+    b.start()
+    logger.info("[stream %s] HLS session created, FFmpeg pre-warming (GET /stream/%s)", stream_id, stream_id)
     return stream_id
 
 
