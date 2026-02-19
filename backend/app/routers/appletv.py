@@ -140,7 +140,8 @@ async def stream_merged(stream_id: str, request: Request):
     For merge sessions we wait for the first chunk before responding so Apple TV gets data immediately.
     """
     client_host = request.client.host if request.client else "unknown"
-    logger.info("[stream %s] Stream requested from %s (GET /stream/%s)", stream_id, client_host, stream_id)
+    user_agent = request.headers.get("user-agent", "unknown")
+    logger.info("[stream %s] Stream requested from %s (User-Agent: %s) (GET /stream/%s)", stream_id, client_host, user_agent[:50], stream_id)
     session = get_merge_session(stream_id)
     if not session:
         raise HTTPException(status_code=404, detail="Stream not found or expired")

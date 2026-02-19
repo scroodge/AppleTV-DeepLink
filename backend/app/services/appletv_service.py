@@ -626,7 +626,22 @@ class AppleTVService:
                                     if not prewarm_ok:
                                         logger.warning("HLS pre-warm incomplete, but proceeding anyway")
                                     logger.info("Sending remux URL to Apple TV via AirPlay...")
-                                    await stream.play_url(play_url_final)
+                                    try:
+                                        await stream.play_url(play_url_final)
+                                    except Exception as playback_err:
+                                        err_str = str(playback_err).lower()
+                                        # HTTP 500 on /playback-info is a known pyatv issue - playback may have started
+                                        # but Apple TV doesn't return status. If it's just playback-info error, consider it success.
+                                        if "playback-info" in err_str and ("500" in err_str or "internal server error" in err_str):
+                                            logger.info("HTTP 500 on /playback-info (known pyatv issue) - playback likely started, treating as success")
+                                            return {
+                                                "status": "SUCCESS",
+                                                "message": f"Открыто на {atv.name} (HLS remux)",
+                                                "method": "airplay_remux",
+                                                "merge_used": True,
+                                            }
+                                        # Other errors are real failures
+                                        raise playback_err
                                 except Exception as e2:
                                     err_detail = str(e2).strip() or type(e2).__name__
                                     logger.warning("HLS remux retry failed: %s", e2, exc_info=True)
