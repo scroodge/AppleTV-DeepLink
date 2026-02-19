@@ -385,6 +385,10 @@ async def play_url(request: PlayRequest, db: Session = Depends(get_db)):
             msg = result.get("message", "AirPlay pairing required for playback.")
             log_add({"status": "error", "url": url_truncated, "device": device_name, "message": msg})
             return error_response("NEED_AIRPLAY_PAIRING", msg)
+        if result.get("status") in ("HLS_REMUX_FAILED", "HLS_NEED_REMUX"):
+            msg = result.get("message", "HLS stream remux failed.")
+            log_add({"status": "error", "url": url_truncated, "device": device_name, "message": msg})
+            return error_response(result.get("status"), msg)
         log_add({
             "status": "success",
             "url": url_truncated,

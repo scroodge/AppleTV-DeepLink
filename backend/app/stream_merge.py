@@ -228,13 +228,17 @@ def _run_ffmpeg_hls_to_mp4(stream_id: str):
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             bufsize=256 * 1024,
         )
         for chunk in iter(lambda: proc.stdout.read(65536), b""):
             if chunk:
                 yield chunk
         proc.wait()
+        if proc.returncode != 0:
+            err = (proc.stderr.read() or b"").decode("utf-8", errors="replace").strip()
+            if err:
+                logger.warning("[stream %s] HLS→MP4 ffmpeg exit %s: %s", stream_id, proc.returncode, err[:500])
     except Exception as e:
         logger.warning("Stream HLS→MP4 ffmpeg error: %s", e)
 

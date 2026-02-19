@@ -475,7 +475,8 @@ class AppleTVService:
                 is_direct_media = self._is_direct_media_url(url)
                 has_apps = getattr(atv_instance, "apps", None) is not None
 
-                if is_deep_link and has_apps:
+                # Don't try launch_app for direct media (.m3u8, .mp4): use AirPlay (and HLS→MP4 remux for .m3u8)
+                if is_deep_link and has_apps and not is_direct_media:
                     # Try to launch as deep link via Apps interface (requires Companion/MRP)
                     # For YouTube use youtube:// scheme so the YouTube app plays natively (no conversion/ffmpeg)
                     try:
@@ -495,81 +496,91 @@ class AppleTVService:
                     except Exception as e:
                         logger.warning(f"Failed to launch as deep link: {e}, falling back to AirPlay")
                 
-                # AirPlay: only direct media URLs work; page links (YouTube, etc.) via yt-dlp or server-side merge
+                # AirPlay: first try "Home Assistant way" (no conversion); on error retry with our remux/merge
                 stream = atv_instance.stream
                 if stream:
-                    # For URL playback we need AirPlay credentials; without them pyatv returns "not authenticated"
                     if not has_airplay_creds:
                         return {
                             "status": "NEED_AIRPLAY_PAIRING",
                             "message": "Для воспроизведения видео нужна сопряжение по AirPlay. Откройте настройки устройства, выберите этот Apple TV и выполните сопряжение по протоколу «AirPlay» (не только Companion).",
                             "device_name": atv.name,
                         }
-                    play_url_final = url
+                    self._last_merge_used = False
                     resolved_quality = None
-                    # HLS (.m3u8): remux to MP4 on server so Apple TV gets a single MP4 stream (like YouTube merge)
-                    if is_direct_media and self._is_hls_url(url):
-                        try:
-                            from app.stream_merge import create_hls_session
-                            stream_id = create_hls_session(url)
-                            base = (os.environ.get("STREAM_BASE_URL") or "http://localhost:8000").rstrip("/")
-                            play_url_final = f"{base}/api/appletv/stream/{stream_id}"
-                            self._last_merge_used = True
-                            logger.info("Using HLS→MP4 remux stream for AirPlay")
-                        except Exception as e:
-                            logger.warning("HLS→MP4 session failed: %s", e)
-                    elif is_deep_link and not is_direct_media:
-                        self._last_merge_used = False
-                        # For 720p/1080p try server-side merge (video+audio) so we get quality with sound
-                        # For "auto" also try merge to avoid DASH-only streams that AirPlay RTSP can't handle
-                        if quality in ("720p", "1080p", "auto"):
-                            try:
-                                from app.stream_merge import get_video_audio_urls, create_merge_session
-                                merge_info = await get_video_audio_urls(url, quality if quality != "auto" else "720p")
-                                if merge_info:
-                                    stream_id = create_merge_session(
-                                        merge_info["video_url"],
-                                        merge_info["audio_url"],
-                                        merge_info.get("height"),
-                                    )
-                                    base = (os.environ.get("STREAM_BASE_URL") or "http://localhost:8000").rstrip("/")
+                    base = (os.environ.get("STREAM_BASE_URL") or "http://localhost:8000").rstrip("/")
+                    # Step 1: build URL the simple way (like HA — pass URL or single resolved stream)
+                    if is_direct_media:
+                        play_url_final = url
+                    else:
+                        # Page link (YouTube etc.): resolve to single stream URL
+                        resolved = await self._resolve_stream_url(url, quality)
+                        if not resolved:
+                            return {
+                                "status": "UNSUPPORTED_URL",
+                                "message": "Не удалось получить прямую ссылку на видео. Поддерживаются YouTube и похожие сайты (нужен yt-dlp). Для Netflix/приложений используйте Apple TV 4-го поколения (tvOS) или вставьте прямую ссылку (.mp4, .m3u8).",
+                                "device_name": atv.name,
+                            }
+                        play_url_final = resolved["url"]
+                        resolved_quality = resolved.get("quality_label")
+                    logger.info("Playing URL via AirPlay (HA-style): %s", play_url_final[:80] + ("..." if len(play_url_final) > 80 else ""))
+                    try:
+                        await stream.play_url(play_url_final)
+                    except Exception as play_err:
+                        err_str = str(play_err).lower()
+                        # Retry with conversion if Apple TV rejected (RTSP 400 / format)
+                        if "400" in err_str or "rtsp" in err_str or "bad request" in err_str:
+                            if is_direct_media and self._is_hls_url(url):
+                                try:
+                                    from app.stream_merge import create_hls_session
+                                    stream_id = create_hls_session(url)
                                     play_url_final = f"{base}/api/appletv/stream/{stream_id}"
-                                    resolved_quality = f"{merge_info.get('height') or (quality if quality != 'auto' else '720')}p" if merge_info.get("height") else (quality if quality != "auto" else "720p")
-                                    logger.info(f"Using server merge stream (quality: {resolved_quality})")
-                                    # Mark so frontend/log can show "склейка на сервере"
                                     self._last_merge_used = True
-                            except Exception as e:
-                                logger.warning("Merge fallback failed: %s", e)
-                                self._last_merge_used = False
-                        else:
-                            self._last_merge_used = False
-                        # Fallback: single URL (no merge) - prefer combined format for AirPlay compatibility
-                        if play_url_final == url:
-                            resolved = await self._resolve_stream_url(url, quality)
-                            if resolved:
-                                play_url_final = resolved["url"]
-                                resolved_quality = resolved.get("quality_label")
-                                logger.info(f"Resolved URL to direct stream (quality: {resolved_quality or '?'}), playing via AirPlay")
+                                    logger.info("HLS failed, retrying with HLS→MP4 remux: %s", stream_id)
+                                    await stream.play_url(play_url_final)
+                                except Exception as e2:
+                                    logger.warning("HLS remux retry failed: %s", e2)
+                                    return {
+                                        "status": "HLS_REMUX_FAILED",
+                                        "message": "HLS-поток не воспроизводится напрямую. Remux на сервере не удался. Проверьте STREAM_BASE_URL и логи.",
+                                        "device_name": atv.name,
+                                    }
+                            elif is_deep_link and not is_direct_media and quality in ("720p", "1080p", "auto"):
+                                try:
+                                    from app.stream_merge import get_video_audio_urls, create_merge_session
+                                    merge_info = await get_video_audio_urls(url, quality if quality != "auto" else "720p")
+                                    if merge_info:
+                                        stream_id = create_merge_session(
+                                            merge_info["video_url"],
+                                            merge_info["audio_url"],
+                                            merge_info.get("height"),
+                                        )
+                                        play_url_final = f"{base}/api/appletv/stream/{stream_id}"
+                                        resolved_quality = f"{merge_info.get('height') or (quality if quality != 'auto' else '720')}p" if merge_info.get("height") else (quality if quality != "auto" else "720p")
+                                        self._last_merge_used = True
+                                        logger.info("Direct stream failed, retrying with merge (quality: %s)", resolved_quality)
+                                        await stream.play_url(play_url_final)
+                                    else:
+                                        raise play_err
+                                except Exception as e2:
+                                    if e2 is play_err:
+                                        raise
+                                    logger.warning("Merge retry failed: %s", e2)
+                                    raise play_err
                             else:
-                                return {
-                                    "status": "UNSUPPORTED_URL",
-                                    "message": "Не удалось получить прямую ссылку на видео. Поддерживаются YouTube и похожие сайты (нужен yt-dlp). Для Netflix/приложений используйте Apple TV 4-го поколения (tvOS) или вставьте прямую ссылку (.mp4, .m3u8).",
-                                    "device_name": atv.name,
-                                }
-                    logger.info("Playing URL via AirPlay: %s", play_url_final[:80] + ("..." if len(play_url_final) > 80 else ""))
-                    await stream.play_url(play_url_final)
+                                raise play_err
+                        else:
+                            raise play_err
                     msg = f"Воспроизведение на {atv.name}"
                     if resolved_quality:
                         msg += f" • качество: {resolved_quality}"
-                    merge_used = getattr(self, "_last_merge_used", False)
-                    if merge_used:
+                    if self._last_merge_used:
                         msg += " • склейка на сервере"
                     return {
                         "status": "SUCCESS",
                         "message": msg,
                         "method": "airplay",
                         "resolved_quality": resolved_quality,
-                        "merge_used": merge_used,
+                        "merge_used": self._last_merge_used,
                     }
                 else:
                     raise ValueError("Neither Apps nor Stream interface available on this device")
