@@ -372,6 +372,10 @@ async def play_url(request: PlayRequest, db: Session = Depends(get_db)):
             msg = result.get("message", "This URL is not supported for playback on this device.")
             log_add({"status": "error", "url": url_truncated, "device": device_name, "message": msg})
             return error_response("UNSUPPORTED_URL", msg)
+        if result.get("status") == "NEED_AIRPLAY_PAIRING":
+            msg = result.get("message", "AirPlay pairing required for playback.")
+            log_add({"status": "error", "url": url_truncated, "device": device_name, "message": msg})
+            return error_response("NEED_AIRPLAY_PAIRING", msg)
         log_add({
             "status": "success",
             "url": url_truncated,

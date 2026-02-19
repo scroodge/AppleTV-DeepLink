@@ -410,6 +410,16 @@ class AppleTVService:
                 except Exception as e:
                     logger.warning(f"Could not set credentials from storage: {e}", exc_info=True)
             
+            # Check if we have AirPlay credentials (required for stream.play_url / YouTube playback)
+            airplay_service = atv.get_service(Protocol.AirPlay)
+            has_airplay_creds = False
+            if stored_creds and isinstance(stored_creds, dict):
+                creds_dict = stored_creds
+                ap = creds_dict.get("airplay") or creds_dict.get("AirPlay") or creds_dict.get("credentials")
+                has_airplay_creds = bool(ap)
+            if airplay_service and not has_airplay_creds:
+                logger.warning("AirPlay credentials missing - playback will likely fail with 'not authenticated'")
+            
             # Connect to device
             atv_instance = await connect(atv, loop=loop)
             
@@ -460,6 +470,13 @@ class AppleTVService:
                 # AirPlay: only direct media URLs work; page links (YouTube, etc.) via yt-dlp or server-side merge
                 stream = atv_instance.stream
                 if stream:
+                    # For URL playback we need AirPlay credentials; without them pyatv returns "not authenticated"
+                    if not has_airplay_creds:
+                        return {
+                            "status": "NEED_AIRPLAY_PAIRING",
+                            "message": "Для воспроизведения видео нужна сопряжение по AirPlay. Откройте настройки устройства, выберите этот Apple TV и выполните сопряжение по протоколу «AirPlay» (не только Companion).",
+                            "device_name": atv.name,
+                        }
                     play_url_final = url
                     resolved_quality = None
                     # HLS (.m3u8): remux to MP4 on server so Apple TV gets a single MP4 stream (like YouTube merge)
@@ -531,6 +548,11 @@ class AppleTVService:
                 atv_instance.close()
         except Exception as e:
             logger.error(f"Error playing/launching URL: {e}", exc_info=True)
+            err_lower = str(e).lower()
+            if "not authenticated" in err_lower or "authentication" in err_lower or "pairing" in err_lower:
+                raise ValueError(
+                    "Устройство не авторизовано для AirPlay. Выполните сопряжение по протоколу AirPlay: настройки → выберите этот Apple TV → сопряжение по AirPlay."
+                ) from e
             raise
 
     async def stop_playback(
