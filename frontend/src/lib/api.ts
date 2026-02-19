@@ -2,9 +2,14 @@
 import { browser } from '$app/environment';
 import type { ApiResponse, DeviceInfo, PairedDevice, DefaultDevice, PairingStatus, ActivityEntry } from './types';
 
-const API_URL = (typeof window !== 'undefined'
-	? (import.meta.env.PUBLIC_API_URL || 'http://localhost:8100')
-	: 'http://localhost:8100');
+function getApiUrl(): string {
+	if (typeof window === 'undefined') return 'http://localhost:8100';
+	const env = import.meta.env.PUBLIC_API_URL;
+	if (env) return env;
+	// Без env: тот же хост, порт 8100 (чтобы работало при открытии по IP, напр. http://192.168.1.5:3000)
+	return `${window.location.protocol}//${window.location.hostname}:8100`;
+}
+const API_URL = getApiUrl();
 
 async function request<T>(
 	endpoint: string,
