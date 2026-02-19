@@ -593,16 +593,52 @@ class AppleTVService:
                         play_url_final = resolved["url"]
                         resolved_quality = resolved.get("quality_label")
                     
+                    # Helper to handle HTTP 500 on /playback-info (known pyatv issue)
+                    async def play_url_with_500_handling(url_to_play: str, context: str = "") -> Optional[Dict[str, Any]]:
+                        """Play URL via AirPlay, handling HTTP 500 on /playback-info as success.
+                        Note: HTTP 500 usually means playback started but Apple TV doesn't return status.
+                        If playback doesn't start, check that Apple TV can access the URL."""
+                        try:
+                            await stream.play_url(url_to_play)
+                            return None  # Success, no error
+                        except HttpError as err:
+                            if err.status_code == 500:
+                                logger.info(f"HTTP 500 from Apple TV (known pyatv issue with /playback-info) - playback likely started{(' - ' + context) if context else ''}, treating as success")
+                                warning_msg = ""
+                                if self._last_merge_used and "/stream/" in url_to_play:
+                                    warning_msg = f" Если воспроизведение не началось, проверьте доступность URL с Apple TV: {url_to_play}"
+                                return {
+                                    "status": "SUCCESS",
+                                    "message": f"Открыто на {atv.name}" + (f" ({context})" if context else "") + warning_msg,
+                                    "method": "airplay" + ("_remux" if self._last_merge_used else ""),
+                                    "merge_used": self._last_merge_used,
+                                }
+                            raise
+                        except Exception as err:
+                            err_str = str(err).lower()
+                            if "500" in err_str and "internal server error" in err_str:
+                                logger.info(f"HTTP 500 detected in error message{(' - ' + context) if context else ''} - playback likely started, treating as success")
+                                warning_msg = ""
+                                if self._last_merge_used and "/stream/" in url_to_play:
+                                    warning_msg = f" Если воспроизведение не началось, проверьте доступность URL с Apple TV: {url_to_play}"
+                                return {
+                                    "status": "SUCCESS",
+                                    "message": f"Открыто на {atv.name}" + (f" ({context})" if context else "") + warning_msg,
+                                    "method": "airplay" + ("_remux" if self._last_merge_used else ""),
+                                    "merge_used": self._last_merge_used,
+                                }
+                            raise
+                    
                     # For HLS with VidHub failed, skip raw playback attempt
                     if skip_raw_hls:
                         play_err = Exception("VidHub not available, skipping raw HLS playback")
                     else:
                         logger.info("Playing URL via AirPlay (HA-style): %s", play_url_final[:80] + ("..." if len(play_url_final) > 80 else ""))
                         play_err = None
-                        try:
-                            await stream.play_url(play_url_final)
-                        except Exception as e:
-                            play_err = e
+                        result_500 = await play_url_with_500_handling(play_url_final)
+                        if result_500:
+                            return result_500
+                        play_err = None  # Success
                     
                     if play_err:
                         err_str = str(play_err).lower()
@@ -627,35 +663,10 @@ class AppleTVService:
                                     if not prewarm_ok:
                                         logger.warning("HLS pre-warm incomplete, but proceeding anyway")
                                     logger.info("Sending remux URL to Apple TV via AirPlay...")
-                                    try:
-                                        await stream.play_url(play_url_final)
-                                    except HttpError as playback_err:
-                                        # HTTP 500 on /playback-info is a known pyatv issue - playback may have started
-                                        # but Apple TV doesn't return status. This happens in _wait_for_media_to_end()
-                                        # after URL was successfully sent. For HLS remux, treat HTTP 500 as success.
-                                        if playback_err.status_code == 500:
-                                            logger.info("HTTP 500 from Apple TV (known pyatv issue with /playback-info) - playback likely started, treating as success")
-                                            return {
-                                                "status": "SUCCESS",
-                                                "message": f"Открыто на {atv.name} (HLS remux)",
-                                                "method": "airplay_remux",
-                                                "merge_used": True,
-                                            }
-                                        # Other HTTP errors are real failures
-                                        raise playback_err
-                                    except Exception as playback_err:
-                                        err_str = str(playback_err).lower()
-                                        # Also check for HTTP 500 in error message (fallback)
-                                        if "500" in err_str and "internal server error" in err_str:
-                                            logger.info("HTTP 500 detected in error message - playback likely started, treating as success")
-                                            return {
-                                                "status": "SUCCESS",
-                                                "message": f"Открыто на {atv.name} (HLS remux)",
-                                                "method": "airplay_remux",
-                                                "merge_used": True,
-                                            }
-                                        # Other errors are real failures
-                                        raise playback_err
+                                    logger.info("NOTE: If playback doesn't start, check that Apple TV can access: %s", play_url_final)
+                                    result_500 = await play_url_with_500_handling(play_url_final, "HLS remux")
+                                    if result_500:
+                                        return result_500
                                 except Exception as e2:
                                     err_detail = str(e2).strip() or type(e2).__name__
                                     logger.warning("HLS remux retry failed: %s", e2, exc_info=True)
@@ -678,7 +689,9 @@ class AppleTVService:
                                         resolved_quality = f"{merge_info.get('height') or (quality if quality != 'auto' else '720')}p" if merge_info.get("height") else (quality if quality != "auto" else "720p")
                                         self._last_merge_used = True
                                         logger.info("Direct stream failed, retrying with merge (quality: %s)", resolved_quality)
-                                        await stream.play_url(play_url_final)
+                                        result_500 = await play_url_with_500_handling(play_url_final, f"YouTube {resolved_quality} merge")
+                                        if result_500:
+                                            return result_500
                                     else:
                                         raise play_err
                                 except Exception as e2:
