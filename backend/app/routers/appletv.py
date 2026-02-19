@@ -1,5 +1,5 @@
 """Apple TV API routes."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -7,7 +7,7 @@ from pydantic import BaseModel
 import logging
 
 from app.database import get_db
-from app.stream_merge import stream_merged_mp4_async, get_merge_session
+from app.stream_merge import stream_merged_mp4_async, get_merge_session, wait_first_chunk_merge
 from app.models import Device, DefaultDevice
 from app.services.appletv_service import AppleTVService
 from app.activity_log import add as log_add, get as log_get
@@ -126,14 +126,29 @@ async def get_paired_devices(db: Session = Depends(get_db)):
 
 
 @router.get("/stream/{stream_id}")
-async def stream_merged(stream_id: str):
-    """Stream merged video+audio (e.g. YouTube 1080p). Used by Apple TV when playing merge URL."""
-    if not get_merge_session(stream_id):
+async def stream_merged(stream_id: str, request: Request):
+    """Stream merged video+audio (e.g. YouTube 1080p). Used by Apple TV when playing merge URL.
+    For merge sessions we wait for the first chunk before responding so Apple TV gets data immediately.
+    """
+    client_host = request.client.host if request.client else "unknown"
+    logger.info("[stream %s] Stream requested from %s (GET /stream/%s)", stream_id, client_host, stream_id)
+    session = get_merge_session(stream_id)
+    if not session:
         raise HTTPException(status_code=404, detail="Stream not found or expired")
+    if "consumers" in session:
+        first_chunk, q, unregister = await wait_first_chunk_merge(stream_id, timeout=25.0)
+        if first_chunk is None or q is None:
+            logger.warning("[stream %s] No first chunk in time, returning 503", stream_id)
+            raise HTTPException(status_code=503, detail="Stream not ready; try again in a few seconds")
+        return StreamingResponse(
+            stream_merged_mp4_async(stream_id, first_chunk=first_chunk, chunk_queue=q, unregister_cb=unregister),
+            media_type="video/mp4",
+            headers={"Cache-Control": "no-store"},
+        )
     return StreamingResponse(
         stream_merged_mp4_async(stream_id),
         media_type="video/mp4",
-        headers={"Accept-Ranges": "bytes", "Cache-Control": "no-store"},
+        headers={"Cache-Control": "no-store"},
     )
 
 

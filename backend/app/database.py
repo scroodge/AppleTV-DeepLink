@@ -4,12 +4,12 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-# SQLite database path - use /app/data directory for persistence
-DB_DIR = "/app/data"
+# SQLite database directory: backend/data when run locally, /app/data in Docker
+DB_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
 os.makedirs(DB_DIR, exist_ok=True)
 DB_PATH = os.path.join(DB_DIR, "appletv.db")
 
-# Use absolute path for SQLite
+# Use absolute path for SQLite (or DATABASE_URL env if set, e.g. in Docker)
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
 
 engine = create_engine(

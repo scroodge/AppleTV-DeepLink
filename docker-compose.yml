@@ -6,8 +6,9 @@ services:
     container_name: deep-link-backend
     # Bridge network for macOS/Windows compatibility
     # Note: mDNS discovery may be limited - see README for troubleshooting
+    # Explicit 0.0.0.0 so port is reachable from LAN (Apple TV must fetch stream from Mac IP)
     ports:
-      - "8000:8000"
+      - "0.0.0.0:8000:8000"
     volumes:
       - ./backend/data:/app/data
     environment:
