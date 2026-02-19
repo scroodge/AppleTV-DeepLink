@@ -1,0 +1,22 @@
+# Для Linux-сервера: play_url (HLS, YouTube) даёт RTSP SETUP 400 в обычном Docker,
+# т.к. timing server в pyatv биндится на IP контейнера, Apple TV до него не достучится.
+# Решение: backend в network_mode: host — сервер слушает на IP хоста, SETUP проходит.
+#
+# Использование на сервере (ai, Linux):
+#   export STREAM_BASE_URL=http://192.168.0.149:8100
+#   export PUBLIC_API_URL=http://192.168.0.149:8100   # для фронта (браузер дергает API по этому URL)
+#   docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
+# Бэкенд: хост:8100. Frontend: хост:3000, в настройках фронта PUBLIC_API_URL должен быть http://IP:8100.
+
+services:
+  backend:
+    network_mode: host
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100"]
+    environment:
+      - DATABASE_URL=sqlite:////app/data/appletv.db
+      - STREAM_BASE_URL=${STREAM_BASE_URL:-http://localhost:8100}
+  frontend:
+    environment:
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-http://localhost:8100}
+      - PORT=3000
+      - HOST=0.0.0.0
