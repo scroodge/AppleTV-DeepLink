@@ -11,6 +11,9 @@
 services:
   backend:
     network_mode: host
+    # Убираем networks и ports — они несовместимы с network_mode: host
+    networks: {}
+    ports: []
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100"]
     environment:
       - DATABASE_URL=sqlite:////app/data/appletv.db
