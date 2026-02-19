@@ -538,10 +538,11 @@ class AppleTVService:
                                     logger.info("HLS failed, retrying with HLS→MP4 remux: %s", stream_id)
                                     await stream.play_url(play_url_final)
                                 except Exception as e2:
-                                    logger.warning("HLS remux retry failed: %s", e2)
+                                    err_detail = str(e2).strip() or type(e2).__name__
+                                    logger.warning("HLS remux retry failed: %s", e2, exc_info=True)
                                     return {
                                         "status": "HLS_REMUX_FAILED",
-                                        "message": "HLS-поток не воспроизводится напрямую. Remux на сервере не удался. Проверьте STREAM_BASE_URL и логи.",
+                                        "message": f"HLS-поток не воспроизводится напрямую. Remux не удался: {err_detail}. Убедитесь, что STREAM_BASE_URL ({base}) доступен с Apple TV (откройте в браузере с телефона в той же Wi‑Fi).",
                                         "device_name": atv.name,
                                     }
                             elif is_deep_link and not is_direct_media and quality in ("720p", "1080p", "auto"):
