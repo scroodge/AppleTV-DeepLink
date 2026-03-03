@@ -640,11 +640,13 @@ class AppleTVService:
                         play_err = Exception("VidHub not available, skipping raw HLS playback")
                     else:
                         logger.info("Playing URL via AirPlay (HA-style): %s", play_url_final[:80] + ("..." if len(play_url_final) > 80 else ""))
-                        play_err = None
-                        result_500 = await play_url_with_500_handling(play_url_final)
-                        if result_500:
-                            return result_500
-                        play_err = None  # Success
+                        try:
+                            result_500 = await play_url_with_500_handling(play_url_final)
+                            if result_500:
+                                return result_500
+                            play_err = None  # Success
+                        except Exception as e:
+                            play_err = e
                     
                     if play_err:
                         err_str = str(play_err).lower()
